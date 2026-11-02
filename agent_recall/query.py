@@ -143,3 +143,26 @@ def stats(conn: sqlite3.Connection) -> dict[str, Any]:
     errors = [dict(r) for r in conn.execute(
         """SELECT ts, source, error FROM sync_log WHERE error IS NOT NULL ORDER BY ts DESC LIMIT 5""")]
     return {"by_source": by_source, "last_sync": last, "recent_errors": errors}
+
+
+CHAT_SOURCES = ("claude_code", "codex", "claude_app", "chatgpt")
+
+
+def list_threads(conn: sqlite3.Connection, source: str | None = None, project: str | None = None,
+                 limit: int = 500) -> list[dict]:
+    """Agent sessions and imported chats, newest first: one row per thread."""
+    where = ["i.thread_id IS NOT NULL", "i.kind IN ('message', 'tool_call')"]
+    args: list = []
+    if source:
+        where.append("i.source = ?"); args.append(source)
+    else:
+        where.append(f"i.source IN ({','.join('?' * len(CHAT_SOURCES))})"); args += CHAT_SOURCES
+    if project:
+        where.append("i.thread_id IN (SELECT it.thread_id FROM item_projects ip JOIN items it ON it.id = ip.item_id "
+                     "WHERE ip.project_id = ?)"); args.append(project)
+    rows = conn.execute(f"""
+        SELECT i.thread_id, i.source, MIN(i.created_at) AS first_at, MAX(i.created_at) AS last_at,
+               SUM(i.kind = 'message') AS n, MAX(i.cwd) AS cwd
+        FROM items i WHERE {' AND '.join(where)}
+        GROUP BY i.thread_id ORDER BY last_at DESC LIMIT ?""", (*args, limit)).fetchall()
+    return [dict(r) for r in rows]

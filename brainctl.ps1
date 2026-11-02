@@ -311,6 +311,7 @@ function Cmd-Install {
     Step (T "Check" "Проверка")
     & $Py -m agent_recall doctor
     Write-Host ("`n" + (T "Done. In a new terminal window you have:" "Готово. В новом окне терминала доступны:")) -ForegroundColor Green
+    Info (T "brain                      — full-screen UI" "brain                      — полноэкранный интерфейс")
     Info (T "brain search <query>       — search" "brain search <запрос>      — поиск")
     Info (T "brain handoff --last -c    — continue in another AI" "brain handoff --last -c    — продолжить в другом ИИ")
     Info (T "brainctl status            — installation status" "brainctl status            — состояние установки")
@@ -320,6 +321,15 @@ function Cmd-Install {
 function Cmd-Update {
     Step (T "Updating agent-recall" "Обновление agent-recall")
     $src = Resolve-Source
+    if ((Test-Path (Join-Path $src ".git")) -and (Get-Command git.exe -ErrorAction SilentlyContinue)) {
+        $ErrorActionPreference = "Continue"
+        & git.exe -C $src rev-parse --abbrev-ref --symbolic-full-name "@{u}" *> $null
+        if ($LASTEXITCODE -eq 0) {
+            & git.exe -C $src pull --ff-only
+            if ($LASTEXITCODE -ne 0) { Warn (T "git pull failed (local changes?) — continuing with the current sources" "git pull не прошёл (локальные изменения?) — продолжаю с текущими исходниками") }
+        }
+        $ErrorActionPreference = "Stop"
+    }
     Install-Package $src
     Install-Shims
     Ok (T "Updated from $src" "Обновлено из $src")
@@ -409,7 +419,7 @@ brainctl — установка и управление agent-recall
   install [-Interval 15] [-Vault <путь>] [-Yes] [-NoSync] [-NoTask] [-NoMcp]
                          Python (через winget, если нет) → окружение → конфиг →
                          первая синхронизация → планировщик → подключение к агентам
-  update [-Source <папка>]  переустановить из исходников (после git pull / новой версии)
+  update [-Source <папка>]  git pull исходников и переустановка
   uninstall [-Purge]     удалить программу; с -Purge ещё и базу с конфигом
 
   status                 что установлено, задача планировщика, источники, агенты
@@ -439,7 +449,7 @@ brainctl — install and manage agent-recall
   install [-Interval 15] [-Vault <path>] [-Yes] [-NoSync] [-NoTask] [-NoMcp]
                          Python (via winget if missing) → environment → config →
                          first sync → scheduler → agent connections
-  update [-Source <folder>] reinstall from source (after git pull / a new version)
+  update [-Source <folder>] git pull the sources and reinstall
   uninstall [-Purge]     remove the program; -Purge also deletes the database and config
 
   status                 what is installed, scheduled task, sources, agents

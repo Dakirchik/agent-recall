@@ -1,0 +1,11 @@
+name: Idea or new source
+description: A new source (another agent, chat app, note tool), a UI improvement, anything else
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What would you like
+      description: For a new source — where its data lives on disk or how it can be exported.
+    validations:
+      required: true

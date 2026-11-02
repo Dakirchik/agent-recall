@@ -1,0 +1,24 @@
+name: Bug report
+description: Something did not sync, search, hand off or install correctly
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command or screen, what you expected, what you got. Please remove anything private.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `brain doctor`
+      description: Paths may contain your user name — edit them if you like.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: OS, terminal, agent versions
+      placeholder: Windows 11 + Windows Terminal, Claude Code 2.x, Codex 0.x …

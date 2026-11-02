@@ -2,7 +2,6 @@ name: CI
 
 on:
   push:
-    branches: [main]
   pull_request:
 
 jobs:
@@ -22,22 +21,71 @@ jobs:
         run: python -m pip install ".[mcp]" pytest
       - name: Tests
         run: python -m pytest -q
+      - name: Tests with a non-UTF-8 locale (catches what cp1252 on Windows would)
+        if: runner.os == 'Linux'
+        run: LC_ALL=C LANG=C PYTHONUTF8=0 PYTHONIOENCODING=utf-8 python -m pytest -q -p no:cacheprovider
       - name: CLI smoke test
         run: |
           brain --help
           brain paths
 
-  powershell:
+  windows-installer:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]   # Windows PowerShell 5.1 and PowerShell 7
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@v4
-      - name: Parse brainctl.ps1 (Windows PowerShell 5.1)
-        shell: powershell
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Parse brainctl.ps1
         run: |
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile("$pwd\brainctl.ps1", [ref]$null, [ref]$errors) | Out-Null
           if ($errors) { $errors | ForEach-Object { Write-Error "$($_.Extent.StartLineNumber): $($_.Message)" }; exit 1 }
-          Write-Host "brainctl.ps1 parses cleanly"
-      - name: brainctl help
-        shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\brainctl.ps1 help
+      - name: brainctl help (English and Russian)
+        run: |
+          .\brainctl.ps1 help
+          $env:AGENT_RECALL_LANG = "ru"; .\brainctl.ps1 help
+
+  unix-installer:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: shellcheck
+        if: runner.os == 'Linux'
+        run: shellcheck -S warning -s bash brainctl.sh install.sh install.command
+      - name: scripts are executable in git (users run ./install.sh)
+        run: |
+          for f in install.sh install.command brainctl.sh; do
+            test -x "$f" || { echo "::error file=$f::$f lost its executable bit: git update-index --chmod=+x $f"; exit 1; }
+          done
+      - name: install / use / uninstall with an isolated HOME
+        run: |
+          export HOME="$RUNNER_TEMP/home" SHELL=/bin/zsh GITHUB_TOKEN=
+          mkdir -p "$HOME/.claude/projects/demo"; printf '# mine\n' > "$HOME/.zshrc"; cp "$HOME/.zshrc" "$RUNNER_TEMP/zshrc.orig"
+          printf '%s\n' '{"type":"user","uuid":"u1","sessionId":"s1","cwd":"/tmp/shop","timestamp":"2026-11-01T10:00:00Z","message":{"role":"user","content":"fix the checkout bug"}}' \
+            > "$HOME/.claude/projects/demo/s1.jsonl"
+          ./install.sh -y --python "$(command -v python3)" --no-task --no-mcp
+          grep -q '>>> agent-recall >>>' "$HOME/.zshrc"
+          export PATH="$HOME/.local/bin:$PATH"
+          out="$(brain search checkout)"; grep -q "fix the checkout bug" <<<"$out"
+          out="$(brain handoff --last)"; grep -q "## How it started" <<<"$out"
+          brainctl status
+          brainctl paths
+          brainctl uninstall --purge -y
+          diff "$HOME/.zshrc" "$RUNNER_TEMP/zshrc.orig"
+          test ! -e "$HOME/.local/bin/brain"
+          test ! -e "$HOME/.agent-recall"

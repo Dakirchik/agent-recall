@@ -1,0 +1,8 @@
+# Shell scripts must keep LF even on Windows checkouts (core.autocrlf), or bash refuses them;
+# batch files must be CRLF for cmd.exe.
+* text=auto
+*.sh text eol=lf
+*.command text eol=lf
+*.cmd text eol=crlf
+*.ps1 text
+*.png binary

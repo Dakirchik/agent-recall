@@ -85,6 +85,10 @@ RU: dict[str, str] = {
     "No conversations.json in folder {path}": "В папке {path} нет conversations.json",
     "No conversations.json in archive {name}": "В архиве {name} нет conversations.json",
 
+    "This console cannot show the full-screen UI. Use the commands: brain --help":
+        "Эта консоль не умеет полноэкранный интерфейс. Используйте команды: brain --help",
+    "full-screen UI (also: brain with no arguments)": "полноэкранный интерфейс (или просто brain без аргументов)",
+
     # --- argparse help ---------------------------------------------------------------------------
     "create config.toml (Obsidian vaults are detected automatically)":
         "создать config.toml (хранилища Obsidian находятся автоматически)",

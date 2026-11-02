@@ -58,3 +58,8 @@ def _(text: str, **kw) -> str:
         from .locales import RU
         text = RU.get(text, text)
     return text.format(**kw) if kw else text
+
+
+def T(en: str, ru: str) -> str:
+    """Inline bilingual text (used by the full-screen UI, where strings are short and many)."""
+    return ru if lang() == "ru" else en

@@ -178,6 +178,30 @@ def cline_remove() -> str:
     return "Cline: " + (_("disconnected") if done else _("was not connected"))
 
 
+def state(agent: str) -> str:
+    """"on", "off" or "missing" (the agent is not installed) — for the UI."""
+    try:
+        if agent == "claude":
+            cli = _claude_cli()
+            if not cli:
+                return "missing"
+            return "on" if _run([cli, "mcp", "get", SERVER_NAME]).returncode == 0 else "off"
+        if agent == "codex":
+            cfg = _codex_config()
+            if not cfg.parent.exists():
+                return "missing"
+            return "on" if cfg.exists() and _CODEX_BLOCK.search(cfg.read_text(encoding="utf-8")) else "off"
+        if agent == "cline":
+            files = _cline_settings()
+            if not files:
+                return "missing"
+            return "on" if any(SERVER_NAME in (_load_json(f).get("mcpServers") or {}) for f in files) else "off"
+    except Exception:
+        return "off"
+    return "missing"
+
+
+AGENT_NAMES = {"claude": "Claude Code", "codex": "Codex", "cline": "Cline (VS Code)"}
 ADD = {"claude": claude_add, "codex": codex_add, "cline": cline_add}
 REMOVE = {"claude": claude_remove, "codex": codex_remove, "cline": cline_remove}
 STATUS = {"claude": claude_status, "codex": codex_status, "cline": cline_status}

@@ -52,6 +52,7 @@ def cmd_init(cfg, args):
         listed = ", ".join(f'"{v.as_posix()}"' for v in vaults)
         text = re.sub(r"(?m)^vaults = \[.*\]$", f"vaults = [{listed}]", text, count=1)
     else:
+        text = re.sub(r"(?m)^vaults = \[.*\]$", "vaults = []", text, count=1)
         text = re.sub(r"(?ms)^(\[obsidian\]\s*\nenabled = )true", r"\1false", text, count=1)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text, encoding="utf-8")
@@ -346,6 +347,18 @@ def cmd_import(cfg, args):
             name=name, c=res["conversations"], i=res["items"], w=res["written"], t=tagged))
 
 
+def cmd_ui(cfg, args):
+    from . import app, tui
+    if not tui.supported():
+        sys.exit(_("This console cannot show the full-screen UI. Use the commands: brain --help"))
+    return app.run(cfg)
+
+
+def interactive_terminal() -> bool:
+    import os
+    return sys.stdin.isatty() and sys.stdout.isatty() and os.environ.get("TERM") != "dumb"
+
+
 def cmd_mcp(cfg, args):
     from .mcp_server import serve
     serve(cfg)
@@ -354,7 +367,7 @@ def cmd_mcp(cfg, args):
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="brain", description=_("agent-recall: shared memory for AI agents — sync, search, handoff"))
     p.add_argument("--config", help=_("path to config.toml (default {path})", path=DEFAULT_CONFIG_PATH))
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = p.add_subparsers(dest="cmd")
 
     def filters(sp, project=True, dates=True):
         sp.add_argument("--source", choices=SOURCES)
@@ -461,6 +474,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("path", help=_("export zip, unpacked folder or conversations.json"))
     sp.set_defaults(fn=cmd_import)
 
+    sp = sub.add_parser("ui", help=_("full-screen UI (also: brain with no arguments)"))
+    sp.set_defaults(fn=cmd_ui)
+
     sp = sub.add_parser("mcp", help=_("run the MCP server (stdio) for Claude Code / Codex / Cline"))
     sp.set_defaults(fn=cmd_mcp)
     return p
@@ -480,8 +496,15 @@ def main(argv: list[str] | None = None) -> int:
         set_lang(config_value=load_config(cfg_path).get("language"))
     except Exception:
         set_lang()
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     cfg = load_config(args.config)
+    if not args.cmd:
+        from . import tui
+        if interactive_terminal() and tui.supported():
+            return cmd_ui(cfg, args)
+        parser.print_help()
+        return 0
     try:
         rc = args.fn(cfg, args)
     except BrokenPipeError:  # output piped into `head`, `Select-Object -First` etc.
