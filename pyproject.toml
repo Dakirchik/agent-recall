@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-recall"
+version = "0.1.0"
+description = "Shared memory for your AI agents: Claude Code, Codex, Obsidian, GitHub and chat exports in one searchable SQLite file, served over MCP"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+keywords = ["mcp", "claude-code", "codex", "obsidian", "second-brain", "sqlite", "fts5", "ai-agents"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: OS Independent",
+    "Topic :: Utilities",
+]
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.2", "pypdf>=4"]
+pdf = ["pypdf>=4"]
+yaml = ["pyyaml>=6"]
+
+[project.scripts]
+brain = "agent_recall.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["agent_recall*"]
+
+[tool.setuptools.package-data]
+agent_recall = ["config.example.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

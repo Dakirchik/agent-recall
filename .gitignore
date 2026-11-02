@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+
+# your data never belongs in the repo
+*.db
+*.db-wal
+*.db-shm
+*.jsonl
+config.toml
+!agent_recall/config.example.toml
+brain.log*
+attachments/
+handoff*.md

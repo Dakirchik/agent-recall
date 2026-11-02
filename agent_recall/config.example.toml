@@ -1,0 +1,85 @@
+# Конфиг agent-recall. Создаётся командой `brain init`, лежит в %USERPROFILE%\.agent-recall\config.toml
+# (другое место: --config <путь> или переменная BRAIN_CONFIG).
+# Пути можно писать с прямыми слэшами, ~ и %VAR% раскрываются.
+
+# Где лежит база. По умолчанию — рядом с этим файлом. Рядом с базой будут brain.log и attachments\.
+# db_path = "D:/brain/brain.db"
+
+# --- Источники -------------------------------------------------------------
+
+[obsidian]
+enabled = true
+# brain init находит хранилища сам (из списка, который ведёт Obsidian). Можно указать вручную:
+vaults = ["C:/Users/YOU/Documents/Obsidian/Notes"]
+# Папки, которые пропускаем (по имени папки на любом уровне)
+exclude = [".obsidian", ".trash", ".git", "templates", "_templates"]
+# Скриншоты и вложения: ищутся по тексту вокруг места, куда вставлены в заметку,
+# PDF — ещё и по содержимому.
+attachments = true
+attachment_ext = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic", ".pdf"]
+# Копировать сами файлы в attachments\ рядом с базой — сохранятся, даже если удалить их из Obsidian
+copy_attachments = true
+max_attachment_mb = 25
+
+[claude_code]
+enabled = true
+# Путь находится сам: ~/.claude/projects (или CLAUDE_CONFIG_DIR, если задан).
+# Указывайте, только если сессии лежат в другом месте:
+# dir = "D:/somewhere/.claude/projects"
+# Сколько символов из результатов инструментов (чтение файлов, вывод команд) сохранять.
+max_tool_chars = 1500
+
+[codex]
+enabled = true
+# Путь находится сам: ~/.codex/sessions и archived_sessions (или CODEX_HOME, если задан).
+# dirs = ["D:/somewhere/.codex/sessions"]
+max_tool_chars = 1500
+
+[github]
+enabled = true
+# Токен берётся из переменной окружения; если её нет — из `gh auth token`.
+token_env = "GITHUB_TOKEN"
+# Пусто = все ваши репозитории. Можно маски: ["me/*", "me/project-*"]
+repos = []
+include_forks = false
+# С какой даты забирать историю при первом запуске
+since = "2025-01-01"
+# Предохранитель от бесконечной пагинации на огромных репозиториях
+max_pages = 30
+
+# --- Выгрузка ----------------------------------------------------------------
+
+[export]
+# Куда копировать базу (и папку вложений) после каждой синхронизации, в которой что-то изменилось.
+# Копия делается через SQLite backup API — безопасно даже во время записи.
+after_sync = []            # например ["D:/YandexDisk/agent-recall/brain.db"]
+# Ежедневные снимки brain-YYYY-MM-DD.db в эту папку (пусто = выключено)
+daily_snapshots_dir = ""   # например "D:/Backup/agent-recall"
+keep_daily = 14
+
+# --- Проекты -----------------------------------------------------------------
+# Каждая запись привязывается к проектам по правилам. Маски — как в проводнике (*, ?).
+#   cwd      — рабочая папка сессии Claude Code / Codex
+#   repo     — owner/name на GitHub
+#   obsidian — путь заметки внутри хранилища
+#   tags     — теги Obsidian (без #)
+#   jira     — ключи проектов Jira: ["SHOP"] найдёт SHOP-123 в любом тексте
+#   keywords — подстроки в тексте (без учёта регистра)
+#   regex    — регулярные выражения по тексту
+# После правки правил: brain projects --rebuild
+
+# [[projects]]
+# id = "shop"
+# name = "Интернет-магазин"
+# cwd = ["*shop-frontend*", "*shop-api*"]
+# repo = ["me/shop-*"]
+# obsidian = ["Work/Shop/*"]
+# tags = ["shop"]
+# jira = ["SHOP"]
+# keywords = ["checkout-service"]
+
+# [[projects]]
+# id = "notes"
+# name = "Личная база знаний"
+# obsidian = ["Personal/*"]
+# tags = ["pkm"]
