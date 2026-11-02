@@ -189,7 +189,7 @@ ensure_venv() {
   fi
   info "$(t "installing packages (pip)…" "ставлю пакеты (pip)…")"
   "$VPY" -m pip install --upgrade --quiet --disable-pip-version-check pip >/dev/null 2>&1 || true
-  "$VPY" -m pip install --upgrade --quiet --disable-pip-version-check "$SOURCE[mcp]" \
+  "$VPY" -m pip install --upgrade --quiet --disable-pip-version-check "${SOURCE}[mcp]" \
     || fail "$(t "pip could not install agent-recall (see above). No internet, or behind a proxy? export HTTPS_PROXY=http://proxy:port" "pip не смог установить agent-recall (см. выше). Нет интернета или нужен прокси? export HTTPS_PROXY=http://proxy:port")"
   ok "$(t "installed into $APP_DIR" "установлено в $APP_DIR")"
 }
