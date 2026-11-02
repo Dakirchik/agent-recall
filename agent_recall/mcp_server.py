@@ -10,6 +10,7 @@ from contextlib import closing
 from . import db as dbmod
 from . import query
 from .config import expand
+from .i18n import _
 
 
 def serve(cfg: dict) -> None:
@@ -19,8 +20,10 @@ def serve(cfg: dict) -> None:
         try:  # mcp 1.x
             from mcp.server.fastmcp import FastMCP
         except ImportError as e:
-            raise SystemExit("Нужен пакет mcp: pip install \"mcp>=1.2\"") from e
+            raise SystemExit(_("The mcp package is required: pip install \"mcp>=1.2\"")) from e
 
+    from .i18n import set_lang
+    set_lang(config_value=cfg.get("language"))  # language of handoff briefings
     db_path = expand(cfg["db_path"])
     mcp = FastMCP("brain", instructions=(
         "Personal knowledge base of the user: Obsidian notes (incl. ADRs, session logs, screenshots), "

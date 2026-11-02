@@ -12,6 +12,7 @@ from .collectors import COLLECTORS
 from .config import expand
 from .export import backup_db, daily_snapshot, mirror_dir
 from .projects import assign_projects
+from .i18n import _
 
 LOCK_STALE_SECONDS = 3600
 
@@ -58,12 +59,14 @@ class Lock:
 
 
 def run_sync(cfg: dict, only: list[str] | None = None, verbose: bool = False) -> dict:
+    from .i18n import set_lang
+    set_lang(config_value=cfg.get("language"))
     db_path = expand(cfg["db_path"])
     log = setup_logging(db_path, verbose)
     result: dict = {"sources": {}, "skipped": False}
     with Lock(db_path.with_name("brain.lock")) as lock:
         if not lock.acquired:
-            log.info("sync: другая синхронизация ещё идёт — пропускаю запуск")
+            log.info(_("sync: another sync is still running — skipping this run"))
             result["skipped"] = True
             return result
         conn = dbmod.connect(db_path)
@@ -82,7 +85,7 @@ def run_sync(cfg: dict, only: list[str] | None = None, verbose: bool = False) ->
                 except Exception as e:  # a failing source must not block the others
                     conn.rollback()
                     err = f"{type(e).__name__}: {e}"
-                    log.exception("%s: ошибка", name)
+                    log.exception(_("%s: error"), name)
                 dbmod.log_sync(conn, name, n, time.time() - t0, err)
                 conn.commit()
                 result["sources"][name] = {"written": n, "error": err}
@@ -94,22 +97,22 @@ def run_sync(cfg: dict, only: list[str] | None = None, verbose: bool = False) ->
                 for dest in exp.get("after_sync", []) or []:
                     try:
                         p = backup_db(conn, dest)
-                        log.info("export: копия базы -> %s", p)
+                        log.info(_("export: database copy -> %s"), p)
                         att = expand(cfg["obsidian"].get("attachments_dir") or (db_path.parent / "attachments"))
                         if att.is_dir():
                             n = mirror_dir(att, p.parent / "attachments")
                             if n:
-                                log.info("export: вложений скопировано %d -> %s", n, p.parent / "attachments")
+                                log.info(_("export: attachments copied %d -> %s"), n, p.parent / "attachments")
                     except Exception as e:
-                        log.warning("export: не удалось скопировать в %s: %s", dest, e)
+                        log.warning(_("export: could not copy to %s: %s"), dest, e)
             if exp.get("daily_snapshots_dir"):
                 try:
                     p = daily_snapshot(conn, exp["daily_snapshots_dir"], int(exp.get("keep_daily", 14)))
                     if p:
-                        log.info("export: дневной снимок -> %s", p)
+                        log.info(_("export: daily snapshot -> %s"), p)
                 except Exception as e:
-                    log.warning("export: снимок не создан: %s", e)
+                    log.warning(_("export: snapshot not created: %s"), e)
         finally:
             conn.close()
-    log.info("sync: готово, записано %d", result.get("written", 0))
+    log.info(_("sync: done, written %d"), result.get("written", 0))
     return result

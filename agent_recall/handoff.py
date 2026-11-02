@@ -12,18 +12,31 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from . import query
+from .i18n import _
 
 CHAT_SOURCES = ("claude_code", "codex", "claude_app", "chatgpt")
-SOURCE_NAMES = {
-    "claude_code": "Claude Code", "codex": "Codex CLI", "claude_app": "приложение Claude",
-    "chatgpt": "ChatGPT", "obsidian": "Obsidian", "github": "GitHub",
-}
-SOURCE_IN = {"claude_code": "Claude Code", "codex": "Codex CLI", "claude_app": "приложении Claude",
-             "chatgpt": "ChatGPT"}
+UNTITLED = {"", "Untitled", "Без названия"}
 _FILE_KEYS = ("file_path", "path", "notebook_path", "filePath")
 _PATCH_FILE_RE = re.compile(r"\*\*\* (?:Add|Update|Delete) File: (.+)")
-_TOOL_RE = re.compile(r"^\[инструмент ([^\]]+)\] (.*)$", re.S)
+# tool-call lines as stored by the collectors (Russian markers come from databases made by early versions)
+_TOOL_RE = re.compile(r"^\[(?:tool|инструмент) ([^\]]+)\] (.*)$", re.S)
 _EDIT_TOOLS = {"edit", "write", "multiedit", "notebookedit", "apply_patch", "str_replace_editor", "create_file"}
+
+
+def source_name(source: str) -> str:
+    return {"claude_code": "Claude Code", "codex": "Codex CLI", "claude_app": _("Claude app"),
+            "chatgpt": "ChatGPT", "obsidian": "Obsidian", "github": "GitHub"}.get(source, source)
+
+
+def _source_in(source: str) -> str:
+    """Source name as it reads after "in" (Russian needs a different case)."""
+    return _("the Claude app") if source == "claude_app" else source_name(source)
+
+
+def how_found(code: str, target=None) -> str:
+    q = " ".join(target) if isinstance(target, (list, tuple)) else (target or "")
+    return {"id": _("by session id"), "item": _("by item id"),
+            "search": _("by search “{q}”", q=q)}.get(code, code)
 
 
 # Context the IDE / agent injects into "user" messages: useless for a human or another AI.
@@ -70,7 +83,7 @@ def find_threads(conn: sqlite3.Connection, text: str, limit: int = 5) -> list[di
 def thread_title(conn: sqlite3.Connection, thread_id: str) -> str:
     row = conn.execute("""SELECT title FROM items WHERE thread_id = ? AND kind IN ('session_summary', 'conversation')
                           LIMIT 1""", (thread_id,)).fetchone()
-    if row and row[0] and row[0] != "Без названия":
+    if row and row[0] and row[0] not in UNTITLED:
         return row[0]
     for (body,) in conn.execute("""SELECT body FROM items WHERE thread_id = ? AND kind = 'message'
                                    AND author IN ('user', 'human') ORDER BY created_at LIMIT 5""", (thread_id,)):
@@ -81,19 +94,20 @@ def thread_title(conn: sqlite3.Connection, thread_id: str) -> str:
 
 
 def resolve_thread(conn: sqlite3.Connection, target: str) -> tuple[str, str]:
-    """target = thread id | item id | free-text query. Returns (thread_id, how it was found)."""
+    """target = thread id | item id | free-text query.
+    Returns (thread_id, how): how is "id", "item" or "search" (see how_found)."""
     if conn.execute("SELECT 1 FROM items WHERE thread_id = ? LIMIT 1", (target,)).fetchone():
-        return target, "по id сессии"
+        return target, "id"
     row = conn.execute("SELECT thread_id FROM items WHERE id = ?", (target,)).fetchone()
     if row and row[0]:
-        return row[0], "по id записи"
+        return row[0], "item"
     found = find_threads(conn, target, limit=1)
     if found:
-        return found[0]["thread_id"], f"поиском по «{target}»"
-    raise ThreadNotFound(
-        f"Не нашёл сессию, где есть все слова «{target}».\n"
-        "Чаты из приложения Claude и ChatGPT появляются в базе только после brain import (экспорт);\n"
-        "проверить, что есть в базе: brain search <слова> или brain recent --source claude_app")
+        return found[0]["thread_id"], "search"
+    raise ThreadNotFound(_(
+        "No session contains all the words “{q}”.\n"
+        "Claude app and ChatGPT chats appear only after brain import (data export);\n"
+        "see what is in the database: brain search <words> or brain recent --source claude_app", q=target))
 
 
 def last_thread(conn: sqlite3.Connection, source: str | None = None) -> str:
@@ -104,7 +118,7 @@ def last_thread(conn: sqlite3.Connection, source: str | None = None) -> str:
               AND kind IN ('message', 'tool_call')
             ORDER BY created_at DESC LIMIT 1""", sources).fetchone()
     if not row:
-        raise ThreadNotFound("Сессий ещё нет в базе.")
+        raise ThreadNotFound(_("There are no sessions in the database yet."))
     return row[0]
 
 
@@ -120,9 +134,10 @@ def _touched(rows: list[sqlite3.Row]) -> tuple[list[str], list[str], list[str]]:
             lst.append(v)
 
     for r in rows:
-        if r["kind"] not in ("tool_call", "message") or "[инструмент " not in (r["body"] or ""):
+        body = r["body"] or ""
+        if r["kind"] not in ("tool_call", "message") or ("[tool " not in body and "[инструмент " not in body):
             continue
-        for line in (r["body"] or "").splitlines():
+        for line in body.splitlines():
             m = _TOOL_RE.match(line.strip())
             if not m:
                 continue
@@ -151,11 +166,10 @@ def thread_handoff(conn: sqlite3.Connection, thread_id: str, max_chars: int = 14
         """SELECT id, source, kind, author, title, body, cwd, created_at, meta FROM items
            WHERE thread_id = ? ORDER BY created_at, rid""", (thread_id,)).fetchall()
     if not rows:
-        raise ThreadNotFound(f"Сессия {thread_id} не найдена")
+        raise ThreadNotFound(_("Session {id} not found", id=thread_id))
     source = rows[0]["source"]
     msgs = [r for r in rows if r["kind"] == "message" and r["author"] in ("user", "assistant", "human")]
     users = [r for r in msgs if r["author"] in ("user", "human")]
-    assistants = [r for r in msgs if r["author"] == "assistant"]
     summary = next((r["title"] for r in rows if r["kind"] in ("session_summary", "conversation")), None)
     cwd = next((r["cwd"] for r in rows if r["cwd"]), None)
     branch = None
@@ -173,68 +187,70 @@ def thread_handoff(conn: sqlite3.Connection, thread_id: str, max_chars: int = 14
     dated = [r["created_at"] for r in msgs if r["created_at"]]
 
     def spoken(r) -> str:
-        """Message text without tool-call lines — those are summarised in «Файлы и команды»."""
+        """Message text without tool-call lines — those are summarised under "Files and commands"."""
         lines = [l for l in clean(r["body"]).splitlines() if not _TOOL_RE.match(l.strip())]
         return "\n".join(lines).strip()
 
     talk = [r for r in msgs if spoken(r)]
 
-    head = [f"# Контекст для продолжения работы",
+    head = ["# " + _("Context to continue the work"),
             "",
-            f"Это выжимка моей сессии в {SOURCE_IN.get(source, source)}. Прочитай её, коротко "
-            f"перескажи, как ты понял задачу и где мы остановились, и продолжай с этого места. "
-            f"Если чего-то не хватает — спроси, не додумывай.",
+            _("This is a summary of my session in {where}. Read it, briefly restate how you understand "
+              "the task and where we stopped, then continue from there. If something is missing, ask "
+              "instead of guessing.", where=_source_in(source)),
             "",
-            "## Сессия"]
-    if summary and summary != "Без названия":
-        head.append(f"- Тема: {summary}")
+            "## " + _("Session")]
+    if summary and summary not in UNTITLED:
+        head.append("- " + _("Topic: {t}", t=summary))
     if dated:
-        head.append(f"- Период: {_day(min(dated))} — {_day(max(dated))} UTC, сообщений: {len(talk)}")
+        head.append("- " + _("Period: {a} — {b} UTC, messages: {n}", a=_day(min(dated)), b=_day(max(dated)), n=len(talk)))
     if cwd:
-        head.append(f"- Рабочая папка: `{cwd}`" + (f", ветка `{branch}`" if branch else ""))
+        head.append("- " + _("Working directory: `{cwd}`", cwd=cwd) + (", " + _("branch `{b}`", b=branch) if branch else ""))
     if projects:
-        head.append(f"- Проект: {', '.join(projects)}")
+        head.append("- " + _("Project: {p}", p=", ".join(projects)))
 
-    sections: list[tuple[str, list[str]]] = []
+    # sections: (key, title, lines); keys drive the trimming below
+    sections: list[tuple[str, str, list[str]]] = []
     first_user = next((u for u in users if spoken(u)), None)
     if first_user:
-        sections.append(("## С чего началось", [_clip(spoken(first_user), 2500)]))
+        sections.append(("start", "## " + _("How it started"), [_clip(spoken(first_user), 2500)]))
     if edited or read or commands:
         lines = []
         if edited:
-            lines.append("Изменялись файлы: " + ", ".join(f"`{f}`" for f in edited[:30]))
+            lines.append(_("Files changed:") + " " + ", ".join(f"`{f}`" for f in edited[:30]))
         if read:
-            lines.append("Читались: " + ", ".join(f"`{f}`" for f in read[:20]))
+            lines.append(_("Files read:") + " " + ", ".join(f"`{f}`" for f in read[:20]))
         if commands:
-            lines.append("Команды:")
+            lines.append(_("Commands:"))
             lines += [f"- `{c}`" for c in commands[-15:]]
-        sections.append(("## Файлы и команды", lines))
+        sections.append(("files", "## " + _("Files and commands"), lines))
 
     tail_rows = talk[-6:]
     tail_ids = {r["id"] for r in tail_rows}
     middle_users = [u for u in users if u is not first_user and u["id"] not in tail_ids and spoken(u)]
     if middle_users:
-        sections.append(("## Мои следующие запросы", [f"- {_clip(spoken(u), 400)}" for u in middle_users]))
+        sections.append(("middle", "## " + _("My follow-up requests"),
+                         [f"- {_clip(spoken(u), 400)}" for u in middle_users]))
 
     tail: list[str] = []
     for r in tail_rows:
-        who = "Я" if r["author"] in ("user", "human") else "Ассистент"
+        who = _("Me") if r["author"] in ("user", "human") else _("Assistant")
         tail.append(f"**{who}** ({_day(r['created_at'])}):\n{_clip(spoken(r), 1800)}")
     if tail:
-        sections.append(("## Где остановились (последние реплики)", tail))
-    footer = ["", f"_Полная сессия: `brain thread {thread_id}`_"]
+        sections.append(("tail", "## " + _("Where we stopped (last messages)"), tail))
+    footer = ["", "_" + _("Full session: `brain thread {id}`", id=thread_id) + "_"]
 
     def render(secs):
         out = list(head)
-        for title, body in secs:
+        for _key, title, body in secs:
             out += ["", title, *body]
         return "\n".join(out + footer)
 
     text = render(sections)
     # Over budget: drop the oldest intermediate requests first (the start and the end matter most),
     # then the oldest of the final replies, then shorten everything.
-    mid = next((b for t, b in sections if t.startswith("## Мои следующие")), None)
-    last = next((b for t, b in sections if t.startswith("## Где остановились")), None)
+    mid = next((b for k, _t, b in sections if k == "middle"), None)
+    last = next((b for k, _t, b in sections if k == "tail"), None)
     dropped = 0
     while len(text) > max_chars:
         if mid and len(mid) > 1:
@@ -244,11 +260,11 @@ def thread_handoff(conn: sqlite3.Connection, thread_id: str, max_chars: int = 14
                 mid.pop(0)
             dropped += 1
             mid[:] = [x for x in mid if not x.startswith("- …")]
-            mid.insert(0, f"- … (ещё {dropped} более ранних запросов пропущено)")
+            mid.insert(0, "- … " + _("({n} earlier requests omitted)", n=dropped))
         elif last and len(last) > 2:
             last.pop(0)
         else:
-            shorter = [(t, [_clip(x, max(300, len(x) // 2)) for x in b]) for t, b in sections]
+            shorter = [(k, t, [_clip(x, max(300, len(x) // 2)) for x in b]) for k, t, b in sections]
             if len(render(shorter)) >= len(text):
                 break
             sections = shorter
@@ -261,20 +277,20 @@ def thread_handoff(conn: sqlite3.Connection, thread_id: str, max_chars: int = 14
 def project_handoff(conn: sqlite3.Connection, project: str, days: int = 14, max_chars: int = 16000) -> str:
     p = conn.execute("SELECT id, name FROM projects WHERE id = ?", (project,)).fetchone()
     if not p:
-        raise ThreadNotFound(f"Проект «{project}» не найден (brain projects)")
+        raise ThreadNotFound(_("Project “{p}” not found (brain projects)", p=project))
     since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     in_project = "id IN (SELECT item_id FROM item_projects WHERE project_id = ?)"
-    out = [f"# Контекст проекта «{p['name']}»",
+    out = ["# " + _("Project context: “{name}”", name=p["name"]),
            "",
-           "Это выжимка из моей базы знаний: решения, заметки и последние рабочие сессии по проекту. "
-           "Используй её как контекст; если чего-то не хватает — спроси.",
+           _("This is a summary from my knowledge base: decisions, notes and recent work sessions on the "
+             "project. Use it as context; if something is missing, ask."),
            ""]
 
     adrs = conn.execute(f"""SELECT title, body, created_at FROM items WHERE {in_project}
                             AND source = 'obsidian' AND kind = 'adr' AND deleted_at IS NULL
                             ORDER BY created_at DESC LIMIT 10""", (project,)).fetchall()
     if adrs:
-        out.append("## Принятые решения (ADR)")
+        out.append("## " + _("Decisions (ADR)"))
         for a in adrs:
             out += [f"### {a['title']}", _clip(a["body"], 1200), ""]
 
@@ -282,7 +298,7 @@ def project_handoff(conn: sqlite3.Connection, project: str, days: int = 14, max_
                              AND source = 'obsidian' AND kind NOT IN ('adr', 'image', 'pdf', 'attachment')
                              AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 6""", (project,)).fetchall()
     if notes:
-        out.append("## Последние заметки")
+        out.append("## " + _("Recent notes"))
         for n in notes:
             out += [f"### {n['title']} ({_day(n['updated_at'])[:10]})", _clip(n["body"], 800), ""]
 
@@ -293,7 +309,7 @@ def project_handoff(conn: sqlite3.Connection, project: str, days: int = 14, max_
                                GROUP BY thread_id ORDER BY last_at DESC LIMIT 8""",
                            (project, *CHAT_SOURCES, since)).fetchall()
     if threads:
-        out.append(f"## Рабочие сессии за {days} дн.")
+        out.append("## " + _("Work sessions, last {d} days", d=days))
         for t in threads:
             first = conn.execute("""SELECT body FROM items WHERE thread_id = ? AND kind = 'message'
                                     AND author IN ('user', 'human') ORDER BY created_at LIMIT 1""",
@@ -301,25 +317,25 @@ def project_handoff(conn: sqlite3.Connection, project: str, days: int = 14, max_
             last = conn.execute("""SELECT body FROM items WHERE thread_id = ? AND kind = 'message'
                                    AND author = 'assistant' ORDER BY created_at DESC LIMIT 1""",
                                 (t["thread_id"],)).fetchone()
-            out.append(f"### {SOURCE_NAMES.get(t['source'], t['source'])}, {_day(t['first_at'])} — "
-                       f"{_day(t['last_at'])}, {t['n']} сообщ.")
+            out.append(f"### {source_name(t['source'])}, {_day(t['first_at'])} — {_day(t['last_at'])}, "
+                       + _("{n} msgs", n=t["n"]))
             if first:
-                out.append(f"Задача: {_clip(first[0], 500)}")
+                out.append(_("Task: {t}", t=_clip(clean(first[0]), 500)))
             if last:
-                out.append(f"Итог: {_clip(last[0], 700)}")
-            out.append(f"_Подробно: `brain handoff {t['thread_id']}`_\n")
+                out.append(_("Outcome: {t}", t=_clip(clean(last[0]), 700)))
+            out.append("_" + _("Details: `brain handoff {id}`", id=t["thread_id"]) + "_\n")
 
     commits = conn.execute(f"""SELECT title, repo, created_at FROM items WHERE {in_project}
                                AND source = 'github' AND created_at >= ?
                                ORDER BY created_at DESC LIMIT 20""", (project, since)).fetchall()
     if commits:
-        out.append(f"## GitHub за {days} дн.")
+        out.append("## " + _("GitHub, last {d} days", d=days))
         out += [f"- {_day(c['created_at'])[:10]} {c['repo']}: {c['title']}" for c in commits]
 
     if len(out) <= 4:
-        out.append(f"_За последние {days} дн. по проекту ничего нет. Увеличьте --days или проверьте правила проекта._")
+        out.append("_" + _("Nothing on this project in the last {d} days. Increase --days or check the project rules.", d=days) + "_")
     text = "\n".join(out)
-    return text if len(text) <= max_chars else text[:max_chars].rstrip() + "\n\n…(обрезано по лимиту)"
+    return text if len(text) <= max_chars else text[:max_chars].rstrip() + "\n\n…" + _("(cut to the size limit)")
 
 
 # --- clipboard -----------------------------------------------------------------------------

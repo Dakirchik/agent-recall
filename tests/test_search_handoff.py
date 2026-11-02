@@ -43,7 +43,7 @@ def test_handoff_contents(session):
     assert "`src/pay.ts`" in text and "`README.md`" in text and "`npm test`" in text
     assert "ide_opened_file" not in text and "task-notification" not in text
     assert "Fixed; remaining: e2e on staging." in text
-    assert "## С чего началось\nСертификаты падают при оплате" in text
+    assert "## How it started\nСертификаты падают при оплате" in text
 
 
 def test_handoff_resolves_by_words_and_refuses_partial_matches(session):

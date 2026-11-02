@@ -11,6 +11,7 @@ from pathlib import Path
 from ..config import expand
 from ..db import get_state, set_state, upsert_items
 from ._jsonl import clip, first_line, iter_files, read_new_lines
+from ..i18n import _
 
 # Injected context that Codex sends as "user" messages — not something you wrote.
 _INJECTED_PREFIXES = ("<environment_context", "<user_instructions", "# agents.md", "<permissions",
@@ -70,13 +71,13 @@ def sync(conn, cfg: dict, log) -> int:
                     args = payload.get("arguments") or payload.get("input") or payload.get("action") or ""
                     if not isinstance(args, str):
                         args = json.dumps(args, ensure_ascii=False)
-                    text = f"[инструмент {payload.get('name') or ptype}] {clip(args, 600)}"
+                    text = f"[tool {payload.get('name') or ptype}] {clip(args, 600)}"
                 elif ptype in ("function_call_output", "custom_tool_call_output"):
                     role, kind = "tool", "tool_result"
                     out = payload.get("output")
                     if isinstance(out, dict):
                         out = out.get("content") or json.dumps(out, ensure_ascii=False)
-                    text = f"[результат] {clip(out, max_tool)}"
+                    text = f"[result] {clip(out, max_tool)}"
                 else:
                     continue
                 items.append({
@@ -99,5 +100,5 @@ def sync(conn, cfg: dict, log) -> int:
             state[key] = st
     set_state(conn, "codex:files", state)
     conn.commit()
-    log.info("codex: файлов с новыми строками %d, записано %d", files, written)
+    log.info(_("codex: files with new lines %d, written %d"), files, written)
     return written

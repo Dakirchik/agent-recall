@@ -86,7 +86,7 @@ def mirror_dir(src: str | os.PathLike, dst: str | os.PathLike) -> int:
     if not src.is_dir():
         return 0
     n = 0
-    for root, _, files in os.walk(src):
+    for root, _dirs, files in os.walk(src):
         for fn in files:
             s = os.path.join(root, fn)
             d = dst / os.path.relpath(s, src)

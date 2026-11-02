@@ -12,6 +12,7 @@ import urllib.parse
 import urllib.request
 
 from ..db import get_state, now_iso, set_state, upsert_items
+from ..i18n import _
 
 API = "https://api.github.com"
 
@@ -51,7 +52,7 @@ class GitHub:
 
     def paged(self, path: str, params: dict):
         url = f"{API}{path}?{urllib.parse.urlencode({**params, 'per_page': 100})}"
-        for _ in range(self.max_pages):
+        for _page in range(self.max_pages):
             try:
                 data, link = self._get(url)
             except urllib.error.HTTPError as e:
@@ -69,7 +70,7 @@ def sync(conn, cfg: dict, log) -> int:
     gcfg = cfg["github"]
     token = _token(gcfg)
     if not token:
-        log.warning("github: токен не найден (переменная %s или `gh auth login`) — пропускаю",
+        log.warning(_("github: no token (variable %s or `gh auth login`) — skipping"),
                     gcfg.get("token_env"))
         return 0
     gh = GitHub(token, int(gcfg.get("max_pages", 30)))
@@ -122,17 +123,17 @@ def sync(conn, cfg: dict, log) -> int:
                 items.append({
                     "id": f"github:comment:{full}:{c['id']}",
                     "source": "github", "kind": "comment", "thread_id": f"github:{full}#{num}",
-                    "title": f"#{num} комментарий", "body": c.get("body") or "",
+                    "title": f"#{num} " + _("comment"), "body": c.get("body") or "",
                     "author": (c.get("user") or {}).get("login"), "url": c.get("html_url"), "repo": full,
                     "created_at": c.get("created_at"), "updated_at": c.get("updated_at"),
                 })
         except urllib.error.HTTPError as e:
-            log.warning("github: %s — ошибка API %s, попробую в следующий раз", full, e.code)
+            log.warning(_("github: %s — API error %s, will retry next time"), full, e.code)
             continue
         written += upsert_items(conn, items)
         set_state(conn, key, started)
         conn.commit()
         if items:
-            log.info("github: %s — получено %d", full, len(items))
-    log.info("github: репозиториев %d, записано %d", len(repos), written)
+            log.info(_("github: %s — fetched %d"), full, len(items))
+    log.info(_("github: repositories %d, written %d"), len(repos), written)
     return written

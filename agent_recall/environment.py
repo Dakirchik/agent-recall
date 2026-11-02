@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from .config import expand
+from .i18n import _
 
 
 def _appdata_dirs() -> list[Path]:
@@ -36,7 +37,7 @@ def detect_obsidian_vaults() -> list[Path]:
                 found.append((int(v.get("ts") or 0), p))
     found.sort(key=lambda x: -x[0])  # most recently opened first
     seen, out = set(), []
-    for _, p in found:
+    for _ts, p in found:
         key = str(p).lower()
         if key not in seen:
             seen.add(key)
@@ -47,13 +48,13 @@ def detect_obsidian_vaults() -> list[Path]:
 def count_files(root: Path, pattern: str) -> int:
     if not root.exists():
         return 0
-    return sum(1 for _ in root.rglob(pattern))
+    return sum(1 for _f in root.rglob(pattern))
 
 
 def github_auth_source(cfg: dict) -> str | None:
     env = cfg["github"].get("token_env") or "GITHUB_TOKEN"
     if os.environ.get(env):
-        return f"переменная {env}"
+        return _("variable {name}", name=env)
     from .collectors.github import _token
     if _token({"token_env": "__none__"}):
         return "gh auth"

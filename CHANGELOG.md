@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0 — 2026-11-02
+
+- **English interface.** The CLI, `brainctl`, logs, handoff briefings and the config template are now in English and Russian. The language follows the OS; override with `language` in config.toml or `AGENT_RECALL_LANG`.
+- Tool calls are stored with language-neutral markers (`[tool …]`, `[result]`); databases created by 0.1.0 keep working.
+- `brain` exits quietly when its output is piped into `head` / `Select-Object -First`.
+
 ## 0.1.0 — 2026-11-02
 
 First public release.

@@ -13,6 +13,7 @@ from typing import Any, Iterator
 
 from .collectors._jsonl import clip, first_line
 from .db import upsert_items
+from .i18n import _
 
 MAX_ATTACHMENT_CHARS = 4000
 MAX_TOOL_CHARS = 1500
@@ -24,13 +25,13 @@ def load_conversations(path: str | Path) -> list[dict]:
     if path.is_dir():
         files = sorted(path.rglob("conversations.json"), key=lambda p: len(p.parts))
         if not files:
-            raise FileNotFoundError(f"В папке {path} нет conversations.json")
+            raise FileNotFoundError(_("No conversations.json in folder {path}", path=path))
         path = files[0]
     if path.suffix.lower() == ".zip":
         with zipfile.ZipFile(path) as z:
             names = sorted((n for n in z.namelist() if n.endswith("conversations.json")), key=len)
             if not names:
-                raise FileNotFoundError(f"В архиве {path.name} нет conversations.json")
+                raise FileNotFoundError(_("No conversations.json in archive {name}", name=path.name))
             with z.open(names[0]) as f:
                 data = json.load(io.TextIOWrapper(f, encoding="utf-8"))
     else:
@@ -38,7 +39,7 @@ def load_conversations(path: str | Path) -> list[dict]:
     if isinstance(data, dict):  # some exports wrap the list
         data = data.get("conversations") or data.get("items") or []
     if not isinstance(data, list):
-        raise ValueError("Неожиданный формат conversations.json")
+        raise ValueError(_("Unexpected conversations.json format"))
     return data
 
 
@@ -65,22 +66,22 @@ def _claude_message_text(m: dict) -> str:
                 parts.append(b["text"])
             elif t == "tool_use":
                 args = json.dumps(b.get("input", {}), ensure_ascii=False)
-                parts.append(f"[инструмент {b.get('name')}] {clip(args, 600)}")
+                parts.append(f"[tool {b.get('name')}] {clip(args, 600)}")
             elif t == "tool_result":
                 c = b.get("content")
                 if isinstance(c, list):
                     c = "\n".join(x.get("text", "") for x in c if isinstance(x, dict) and x.get("type") == "text")
                 if c:
-                    parts.append(f"[результат] {clip(str(c), MAX_TOOL_CHARS)}")
+                    parts.append(f"[result] {clip(str(c), MAX_TOOL_CHARS)}")
             # thinking blocks are not kept, same as for Claude Code
     elif m.get("text"):
         parts.append(m["text"])
     for a in m.get("attachments") or []:
-        name = a.get("file_name") or "вложение"
+        name = a.get("file_name") or "attachment"
         extracted = a.get("extracted_content")
-        parts.append(f"[вложение: {name}]" + (f"\n{clip(extracted, MAX_ATTACHMENT_CHARS)}" if extracted else ""))
+        parts.append(f"[attachment: {name}]" + (f"\n{clip(extracted, MAX_ATTACHMENT_CHARS)}" if extracted else ""))
     for f in m.get("files") or []:
-        parts.append(f"[файл: {f.get('file_name') or f.get('file_uuid') or '?'}]")
+        parts.append(f"[file: {f.get('file_name') or f.get('file_uuid') or '?'}]")
     return "\n".join(p for p in parts if p).strip()
 
 
@@ -90,7 +91,7 @@ def claude_items(convs: list[dict]) -> Iterator[dict]:
         if not cid:
             continue
         thread = f"claude_app:{cid}"
-        name = (c.get("name") or "").strip() or "Без названия"
+        name = (c.get("name") or "").strip() or "Untitled"
         url = f"https://claude.ai/chat/{cid}"
         msgs = c.get("chat_messages") or []
         yield {
@@ -124,7 +125,7 @@ def _chatgpt_text(msg: dict) -> str:
             if isinstance(p, str):
                 out.append(p)
             elif isinstance(p, dict):
-                out.append("[изображение]" if "image" in str(p.get("content_type", "")) else "")
+                out.append("[image]" if "image" in str(p.get("content_type", "")) else "")
         return "\n".join(x for x in out if x).strip()
     if ctype == "code":
         return f"```\n{content.get('text', '')}\n```"
@@ -158,7 +159,7 @@ def chatgpt_items(convs: list[dict]) -> Iterator[dict]:
         if not cid:
             continue
         thread = f"chatgpt:{cid}"
-        title = (c.get("title") or "").strip() or "Без названия"
+        title = (c.get("title") or "").strip() or "Untitled"
         url = f"https://chatgpt.com/c/{cid}"
         yield {
             "id": f"chatgpt:conv:{cid}", "source": "chatgpt", "kind": "conversation",
@@ -190,7 +191,7 @@ def import_export(conn, path: str | Path, fmt: str = "auto") -> dict[str, Any]:
         fmt = detect_format(convs) or ""
     gen = {"claude": claude_items, "chatgpt": chatgpt_items}.get(fmt)
     if not gen:
-        raise ValueError("Не понял, чей это экспорт. Укажите явно: brain import claude ... или brain import chatgpt ...")
+        raise ValueError(_("Could not tell whose export this is. Specify it: brain import claude ... or brain import chatgpt ..."))
     written = total = 0
     batch: list[dict] = []
     for item in gen(convs):

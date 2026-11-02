@@ -1,0 +1,220 @@
+"""Russian translations, keyed by the English source string.
+
+To add a language: add a dict like RU, map its code in i18n.SUPPORTED and i18n._().
+tests/test_i18n.py fails if a string wrapped in _() has no translation here.
+"""
+
+RU: dict[str, str] = {
+    # --- CLI: general -------------------------------------------------------------------------
+    "agent-recall: shared memory for AI agents — sync, search, handoff":
+        "agent-recall: общая память для ИИ-агентов — синхронизация, поиск, handoff",
+    "path to config.toml (default {path})": "путь к config.toml (по умолчанию {path})",
+    "Database not found: {path}\nRun first: brain sync": "База не найдена: {path}\nСначала запустите: brain sync",
+    "Done.": "Готово.",
+    "Nothing found.": "Ничего не найдено.",
+    "Item not found": "Запись не найдена",
+    "File not found: {path}": "Не найден файл: {path}",
+    "error: {e}": "ошибка: {e}",
+    "file": "файл",
+    "copy": "копия",
+    "items": "записей",
+
+    # --- init / doctor / paths --------------------------------------------------------------
+    "Config already exists: {path} (overwrite: --force)": "Конфиг уже есть: {path} (перезаписать: --force)",
+    "Config created: {path}": "Создан конфиг: {path}",
+    "Obsidian vaults:": "Хранилища Obsidian:",
+    "No Obsidian vaults found — the source is disabled. Set a path in the config or run: brain init --force --vault <path>":
+        "Хранилища Obsidian не найдены — источник выключен. Укажите путь в конфиге или: brain init --force --vault <путь>",
+    "Projects are configured in the [[projects]] section of the same file.":
+        "Проекты настраиваются в разделе [[projects]] того же файла.",
+    "Config": "Конфиг",
+    "Database": "База",
+    "Log": "Лог",
+    "Attachments": "Вложения",
+    "Copy after sync": "Копия после синхр.",
+    "Snapshots": "Снимки",
+    "Program": "Программа",
+    "not configured": "не настроен",
+    "(missing)": "(нет)",
+    "Sources:": "Источники:",
+    "on ": "вкл ",
+    "off": "выкл",
+    "path not set": "путь не задан",
+    "files: {n}": "файлов: {n}",
+    "token: {src}": "токен: {src}",
+    "not found (setx GITHUB_TOKEN ... or gh auth login)": "не найден (setx GITHUB_TOKEN ... или gh auth login)",
+    "variable {name}": "переменная {name}",
+    "Obsidian vaults found that are not in the config:": "Найдены хранилища Obsidian, которых нет в конфиге:",
+    "Agent connections (MCP):": "Подключение к агентам (MCP):",
+    "Last sync: {ts} UTC": "Последняя синхронизация: {ts} UTC",
+
+    # --- sync / stats / projects / export ------------------------------------------------------
+    "Config not found ({path}), using defaults. Create one: brain init":
+        "Конфиг не найден ({path}), работаю с настройками по умолчанию. Создать: brain init",
+    "Another sync is still running — skipped.": "Другая синхронизация ещё идёт — пропуск.",
+    "written {n}": "записано {n}",
+    "Project links: {n}": "Привязок к проектам: {n}",
+    "No items for this project. Check the id (brain projects) and the rules in the config.":
+        "Для проекта нет записей. Проверьте id (brain projects) и правила в конфиге.",
+    "({n} msgs)": "({n} сообщ.)",
+    "Rules re-applied, links: {n}": "Правила пересчитаны, привязок: {n}",
+    "Database copy: {path}": "Копия базы: {path}",
+    "Exported {n} items to {path}": "Выгружено {n} записей в {path}",
+    "Database: {path}": "База: {path}",
+    "last sync": "последняя синхронизация",
+
+    # --- handoff (CLI) ---------------------------------------------------------------------------
+    "project {p}": "проект {p}",
+    "latest session": "последняя сессия",
+    "No sessions contain all the words “{q}”.": "Сессий со всеми словами «{q}» нет.",
+    "Several sessions match; took the best one. Others: brain handoff {q} --list":
+        "Нашлось несколько сессий, взял самую подходящую. Другие: brain handoff {q} --list",
+    "Saved: {path} — {what}, {n} chars": "Сохранено: {path} — {what}, {n} символов",
+    "Copied to clipboard: {what}, {n} chars. Paste it into any AI.":
+        "Скопировано в буфер обмена: {what}, {n} символов. Вставьте в любой ИИ.",
+    "Could not copy to the clipboard — printing instead.": "Не удалось скопировать в буфер — вывожу текстом.",
+    "Session: {what}": "Сессия: {what}",
+
+    # --- import --------------------------------------------------------------------------------
+    "Claude app": "приложение Claude",
+    "Import ({name}): chats {c}, items {i}, new or changed {w}, project links {t}":
+        "Импорт ({name}): чатов {c}, записей {i}, новых или изменённых {w}, привязок к проектам {t}",
+    "Unexpected conversations.json format": "Неожиданный формат conversations.json",
+    "Could not tell whose export this is. Specify it: brain import claude ... or brain import chatgpt ...":
+        "Не понял, чей это экспорт. Укажите явно: brain import claude ... или brain import chatgpt ...",
+    "No conversations.json in folder {path}": "В папке {path} нет conversations.json",
+    "No conversations.json in archive {name}": "В архиве {name} нет conversations.json",
+
+    # --- argparse help ---------------------------------------------------------------------------
+    "create config.toml (Obsidian vaults are detected automatically)":
+        "создать config.toml (хранилища Obsidian находятся автоматически)",
+    "path to an Obsidian vault (repeatable)": "путь к хранилищу Obsidian (можно несколько раз)",
+    "do not detect vaults automatically": "не искать хранилища автоматически",
+    "check paths, tokens and agent connections": "проверить пути, токены, подключение к агентам",
+    "show all paths: config, database, log, Claude Code, Codex, Obsidian":
+        "показать все пути: конфиг, база, лог, Claude Code, Codex, Obsidian",
+    "register/unregister MCP in Claude Code, Codex, Cline": "подключить/отключить MCP в Claude Code, Codex, Cline",
+    "python executable the agent will run the server with (default: current)":
+        "python.exe, которым агент будет запускать сервер (по умолчанию текущий)",
+    "pull new data from all sources": "забрать новые данные из всех источников",
+    "full-text search": "полнотекстовый поиск",
+    "also search agent tool output": "искать и в выводе инструментов агентов",
+    "show an item in full": "показать запись целиком",
+    "a whole session / thread": "вся сессия / тред",
+    "project history by day": "история проекта по дням",
+    "latest items": "последние записи",
+    "list projects": "список проектов",
+    "re-apply rules after editing the config": "пересчитать правила после правки конфига",
+    "manually link an item to a project": "вручную привязать запись к проекту",
+    "export the database": "выгрузить базу",
+    "what is in the database and when it last synced": "что лежит в базе и когда синхронизировалось",
+    "briefing of a session or project to continue in another AI":
+        "выжимка сессии или проекта, чтобы продолжить в другом ИИ",
+    "session id, item id, or words to find the session": "id сессии, id записи или слова для поиска сессии",
+    "latest session (optionally of a given source)": "последняя сессия (можно указать источник)",
+    "briefing for a project instead of one session": "выжимка по проекту вместо одной сессии",
+    "with --project: how many days of sessions to include": "для --project: за сколько дней брать сессии",
+    "size limit (default 14000)": "ограничение размера (по умолчанию 14000)",
+    "copy to the clipboard": "скопировать в буфер обмена",
+    "save to a .md file": "сохранить в файл .md",
+    "only list the sessions that match the words": "только показать, какие сессии подходят под слова",
+    "import a chat export from the Claude app or ChatGPT": "импорт экспорта чатов из приложения Claude или ChatGPT",
+    "whose export (auto — detect)": "чей экспорт (auto — определить самому)",
+    "export zip, unpacked folder or conversations.json": "zip-архив экспорта, распакованная папка или conversations.json",
+    "run the MCP server (stdio) for Claude Code / Codex / Cline":
+        "запустить MCP-сервер (stdio) для Claude Code / Codex / Cline",
+
+    # --- handoff briefing ------------------------------------------------------------------------
+    "the Claude app": "приложении Claude",
+    "by session id": "по id сессии",
+    "by item id": "по id записи",
+    "by search “{q}”": "поиском по «{q}»",
+    "No session contains all the words “{q}”.\nClaude app and ChatGPT chats appear only after brain import (data export);\nsee what is in the database: brain search <words> or brain recent --source claude_app":
+        "Не нашёл сессию, где есть все слова «{q}».\nЧаты из приложения Claude и ChatGPT появляются в базе только после brain import (экспорт);\nпроверить, что есть в базе: brain search <слова> или brain recent --source claude_app",
+    "There are no sessions in the database yet.": "Сессий ещё нет в базе.",
+    "Session {id} not found": "Сессия {id} не найдена",
+    "Context to continue the work": "Контекст для продолжения работы",
+    "This is a summary of my session in {where}. Read it, briefly restate how you understand the task and where we stopped, then continue from there. If something is missing, ask instead of guessing.":
+        "Это выжимка моей сессии в {where}. Прочитай её, коротко перескажи, как ты понял задачу и где мы остановились, и продолжай с этого места. Если чего-то не хватает — спроси, не додумывай.",
+    "Session": "Сессия",
+    "Topic: {t}": "Тема: {t}",
+    "Period: {a} — {b} UTC, messages: {n}": "Период: {a} — {b} UTC, сообщений: {n}",
+    "Working directory: `{cwd}`": "Рабочая папка: `{cwd}`",
+    "branch `{b}`": "ветка `{b}`",
+    "Project: {p}": "Проект: {p}",
+    "How it started": "С чего началось",
+    "Files and commands": "Файлы и команды",
+    "Files changed:": "Изменялись файлы:",
+    "Files read:": "Читались:",
+    "Commands:": "Команды:",
+    "My follow-up requests": "Мои следующие запросы",
+    "Where we stopped (last messages)": "Где остановились (последние реплики)",
+    "Me": "Я",
+    "Assistant": "Ассистент",
+    "Full session: `brain thread {id}`": "Полная сессия: `brain thread {id}`",
+    "({n} earlier requests omitted)": "(ещё {n} более ранних запросов пропущено)",
+    "Project “{p}” not found (brain projects)": "Проект «{p}» не найден (brain projects)",
+    "Project context: “{name}”": "Контекст проекта «{name}»",
+    "This is a summary from my knowledge base: decisions, notes and recent work sessions on the project. Use it as context; if something is missing, ask.":
+        "Это выжимка из моей базы знаний: решения, заметки и последние рабочие сессии по проекту. Используй её как контекст; если чего-то не хватает — спроси.",
+    "Decisions (ADR)": "Принятые решения (ADR)",
+    "Recent notes": "Последние заметки",
+    "Work sessions, last {d} days": "Рабочие сессии за {d} дн.",
+    "{n} msgs": "{n} сообщ.",
+    "Task: {t}": "Задача: {t}",
+    "Outcome: {t}": "Итог: {t}",
+    "Details: `brain handoff {id}`": "Подробно: `brain handoff {id}`",
+    "GitHub, last {d} days": "GitHub за {d} дн.",
+    "Nothing on this project in the last {d} days. Increase --days or check the project rules.":
+        "За последние {d} дн. по проекту ничего нет. Увеличьте --days или проверьте правила проекта.",
+    "(cut to the size limit)": "(обрезано по лимиту)",
+
+    # --- Obsidian attachments (stored text, searchable) ------------------------------------------
+    "Image": "Изображение",
+    "File": "Файл",
+    "Screenshot": "Скриншот",
+    "Path in vault: {rel}": "Путь в хранилище: {rel}",
+    "Embedded in notes:": "Вставлено в заметки:",
+    "Not embedded in any note.": "Ни в одну заметку не вставлено.",
+    "{label} in “{note}”": "{label} в «{note}»",
+    "comment": "комментарий",
+
+    # --- integrations ------------------------------------------------------------------------------
+    "connected": "подключён",
+    "not connected": "не подключён",
+    "disconnected": "отключён",
+    "was not connected": "не был подключён",
+    "not found, skipping": "не найден, пропускаю",
+    "not found (no `claude` command)": "не найден (нет команды claude)",
+    "not found (no .codex folder)": "не найден (нет папки .codex)",
+    "not found (Cline extension not installed)": "не найден (нет расширения Cline)",
+    "connected ({n} editor(s))": "подключён ({n} редактор(а))",
+    "Claude Code not found. Register manually: {cmd}": "Claude Code не найден. Подключите вручную: {cmd}",
+    "{path} is not valid JSON, leaving it untouched: {e}": "{path} — невалидный JSON, не трогаю: {e}",
+    "The mcp package is required: pip install \"mcp>=1.2\"": "Нужен пакет mcp: pip install \"mcp>=1.2\"",
+
+    # --- log messages ----------------------------------------------------------------------------------
+    "sync: done, written %d": "sync: готово, записано %d",
+    "sync: another sync is still running — skipping this run": "sync: другая синхронизация ещё идёт — пропускаю запуск",
+    "%s: error": "%s: ошибка",
+    "projects: checked %d items, new links %d": "projects: проверено %d записей, новых привязок %d",
+    "export: database copy -> %s": "export: копия базы -> %s",
+    "export: attachments copied %d -> %s": "export: вложений скопировано %d -> %s",
+    "export: could not copy to %s: %s": "export: не удалось скопировать в %s: %s",
+    "export: daily snapshot -> %s": "export: дневной снимок -> %s",
+    "export: snapshot not created: %s": "export: снимок не создан: %s",
+    "claude_code: folder not found: %s": "claude_code: папка не найдена: %s",
+    "claude_code: file was rewritten, reading again: %s": "claude_code: файл перезаписан, читаю заново: %s",
+    "claude_code: files with new lines %d, written %d": "claude_code: файлов с новыми строками %d, записано %d",
+    "codex: files with new lines %d, written %d": "codex: файлов с новыми строками %d, записано %d",
+    "github: no token (variable %s or `gh auth login`) — skipping":
+        "github: токен не найден (переменная %s или `gh auth login`) — пропускаю",
+    "github: %s — API error %s, will retry next time": "github: %s — ошибка API %s, попробую в следующий раз",
+    "github: %s — fetched %d": "github: %s — получено %d",
+    "github: repositories %d, written %d": "github: репозиториев %d, записано %d",
+    "obsidian: vault not found: %s": "obsidian: хранилище не найдено: %s",
+    "obsidian: could not read %s: %s": "obsidian: не удалось прочитать %s: %s",
+    "obsidian: could not copy %s: %s": "obsidian: не удалось скопировать %s: %s",
+    "obsidian: %s — notes %d (written %d, deleted %d), attachments %d (written %d, copied %d)":
+        "obsidian: %s — заметок %d (записано %d, удалено %d), вложений %d (записано %d, скопировано %d)",
+}

@@ -49,7 +49,7 @@ def test_attachments_are_searchable_copied_and_inherit_projects(env):
     env.sync()
     c = env.conn()
     hits = query.search(c, "checkout staging", kind="image")
-    assert len(hits) == 1 and hits[0]["title"].startswith("Скриншот")
+    assert len(hits) == 1 and hits[0]["title"].startswith("Screenshot")
     item = query.get_item(c, hits[0]["id"])
     assert "shop" in item["projects"]
     assert (env.data / "attachments" / "vault" / "Attachments" / "Pasted image 20261101143005.png").exists()

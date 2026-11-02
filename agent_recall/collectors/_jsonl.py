@@ -53,7 +53,7 @@ def clip(text: str | None, limit: int) -> str:
         return ""
     text = str(text)
     if limit and len(text) > limit:
-        return text[:limit] + f"\n…[обрезано, всего {len(text)} символов]"
+        return text[:limit] + f"\n…[truncated, {len(text)} chars total]"
     return text
 
 

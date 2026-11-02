@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ..config import expand
 from ..db import get_state, mark_deleted, set_state, upsert_items
+from ..i18n import _
 
 PARSER_VERSION = 3  # bump to force re-reading every note after the parser learns something new
 
@@ -156,17 +157,17 @@ def attachment_to_item(vault: Path, vault_name: str, rel: str, path: Path, st: o
                        refs: list[dict], pdf_text: str, copy_path: Path | None) -> dict:
     ext = path.suffix.lower()
     kind = "image" if ext in IMAGE_EXT else ("pdf" if ext == ".pdf" else "attachment")
-    label = {"image": "Изображение", "pdf": "PDF"}.get(kind, "Файл")
+    label = {"image": _("Image"), "pdf": "PDF"}.get(kind, _("File"))
     auto_named = path.stem.lower().startswith(("pasted image", "screenshot", "снимок экрана", "скриншот", "image"))
     if kind == "image" and auto_named:
-        label = "Скриншот"
-    lines = [f"{label}: {path.name}", f"Путь в хранилище: {rel}"]
+        label = _("Screenshot")
+    lines = [f"{label}: {path.name}", _("Path in vault: {rel}", rel=rel)]
     if refs:
-        lines.append("Вставлено в заметки:")
+        lines.append(_("Embedded in notes:"))
         for r in refs:
             lines.append(f"- {r['title']}" + (f" — {r['context']}" if r.get("context") else ""))
     else:
-        lines.append("Ни в одну заметку не вставлено.")
+        lines.append(_("Not embedded in any note."))
     if pdf_text:
         lines += ["", pdf_text]
     return {
@@ -175,7 +176,7 @@ def attachment_to_item(vault: Path, vault_name: str, rel: str, path: Path, st: o
         "kind": kind,
         "thread_id": refs[0]["note_id"] if refs else f"obsidian:{vault_name}:{rel}",
         # an auto-generated name says nothing; then the note it lives in is the better title
-        "title": f"{label} в «{refs[0]['title']}»" if (auto_named and refs) else f"{label}: {path.stem}",
+        "title": _("{label} in “{note}”", label=label, note=refs[0]["title"]) if (auto_named and refs) else f"{label}: {path.stem}",
         "body": "\n".join(lines),
         "url": f"obsidian://open?vault={vault_name}&file={urllib.parse.quote(rel)}",
         "path": rel,
@@ -266,7 +267,7 @@ def sync(conn, cfg: dict, log) -> int:
     for vault_str in ocfg.get("vaults", []):
         vault = expand(vault_str)
         if not vault.is_dir():
-            log.warning("obsidian: хранилище не найдено: %s", vault)
+            log.warning(_("obsidian: vault not found: %s"), vault)
             continue
         name = vault.name
         state_key = f"obsidian:{vault.as_posix()}"
@@ -300,7 +301,7 @@ def sync(conn, cfg: dict, log) -> int:
                 try:
                     batch.append(note_to_item(vault, name, p, st))
                 except Exception as e:  # one broken note must not stop the sync
-                    log.warning("obsidian: не удалось прочитать %s: %s", p, e)
+                    log.warning(_("obsidian: could not read %s: %s"), p, e)
                     current.pop(rel, None)
                 if len(batch) >= 200:
                     written += upsert_items(conn, batch)
@@ -332,7 +333,7 @@ def sync(conn, cfg: dict, log) -> int:
                         shutil.copy2(p, copy_path)
                         copied += 1
                     except OSError as e:
-                        log.warning("obsidian: не удалось скопировать %s: %s", p, e)
+                        log.warning(_("obsidian: could not copy %s: %s"), p, e)
                         copy_path = None
                 pdf_text = ""
                 if p.suffix.lower() == ".pdf":
@@ -353,6 +354,6 @@ def sync(conn, cfg: dict, log) -> int:
             set_state(conn, f"{state_key}:attachments", new_seen_att)
             conn.commit()
             written += att_written
-        log.info("obsidian: %s — заметок %d (записано %d, удалено %d), вложений %d (записано %d, скопировано %d)",
+        log.info(_("obsidian: %s — notes %d (written %d, deleted %d), attachments %d (written %d, copied %d)"),
                  name, len(current), n_notes, len(gone), len(current_att), att_written, copied)
     return written

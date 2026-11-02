@@ -11,6 +11,7 @@ import re
 import sqlite3
 
 from .db import get_state, now_precise, set_state
+from .i18n import _
 
 
 def _norm(p: str | None) -> str:
@@ -108,7 +109,7 @@ def assign_projects(conn: sqlite3.Connection, cfg: dict, rebuild: bool = False, 
     set_state(conn, "projects:last_pass", started)
     conn.commit()
     if log:
-        log.info("projects: проверено %d записей, новых привязок %d", len(rows), added)
+        log.info(_("projects: checked %d items, new links %d"), len(rows), added)
     return added
 
 

@@ -9,6 +9,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from .i18n import _
 
 SERVER_NAME = "brain"
 AGENTS = ("claude", "codex", "cline")
@@ -38,29 +39,30 @@ def _run(args: list[str]) -> subprocess.CompletedProcess:
 def claude_status() -> str:
     cli = _claude_cli()
     if not cli:
-        return "не найден (нет команды claude)"
+        return _("not found (no `claude` command)")
     r = _run([cli, "mcp", "get", SERVER_NAME])
-    return "подключён" if r.returncode == 0 else "не подключён"
+    return _("connected") if r.returncode == 0 else _("not connected")
 
 
 def claude_add(python: str | None) -> str:
     cli = _claude_cli()
     cmd, args = _server_cmd(python)
     if not cli:
-        return f"Claude Code не найден. Подключите вручную: claude mcp add {SERVER_NAME} --scope user -- \"{cmd}\" {' '.join(args)}"
+        return _("Claude Code not found. Register manually: {cmd}",
+                 cmd=f"claude mcp add {SERVER_NAME} --scope user -- \"{cmd}\" {' '.join(args)}")
     _run([cli, "mcp", "remove", SERVER_NAME, "--scope", "user"])  # idempotent re-add with fresh paths
     r = _run([cli, "mcp", "add", SERVER_NAME, "--scope", "user", "--", cmd, *args])
     if r.returncode != 0:
         raise RuntimeError((r.stderr or r.stdout).strip())
-    return "Claude Code: подключён"
+    return "Claude Code: " + _("connected")
 
 
 def claude_remove() -> str:
     cli = _claude_cli()
     if not cli:
-        return "Claude Code: не найден, пропускаю"
+        return "Claude Code: " + _("not found, skipping")
     r = _run([cli, "mcp", "remove", SERVER_NAME, "--scope", "user"])
-    return "Claude Code: отключён" if r.returncode == 0 else "Claude Code: не был подключён"
+    return "Claude Code: " + (_("disconnected") if r.returncode == 0 else _("was not connected"))
 
 
 # --- Codex: [mcp_servers.brain] block in config.toml -----------------------------------------
@@ -84,14 +86,14 @@ def _strip_block(text: str) -> str:
 def codex_status() -> str:
     cfg = _codex_config()
     if not cfg.parent.exists():
-        return "не найден (нет папки .codex)"
-    return "подключён" if cfg.exists() and _CODEX_BLOCK.search(cfg.read_text(encoding="utf-8")) else "не подключён"
+        return _("not found (no .codex folder)")
+    return _("connected") if cfg.exists() and _CODEX_BLOCK.search(cfg.read_text(encoding="utf-8")) else _("not connected")
 
 
 def codex_add(python: str | None) -> str:
     cfg = _codex_config()
     if not cfg.parent.exists():
-        return "Codex: не найден, пропускаю"
+        return "Codex: " + _("not found, skipping")
     cmd, args = _server_cmd(python)
     text = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
     _backup(cfg)
@@ -100,19 +102,19 @@ def codex_add(python: str | None) -> str:
     block = (f"\n\n[mcp_servers.{SERVER_NAME}]\ncommand = '{cmd}'\n"
              f"args = [{', '.join(repr(a) for a in args)}]\n")
     cfg.write_text((text + block).lstrip("\n"), encoding="utf-8")
-    return "Codex: подключён"
+    return "Codex: " + _("connected")
 
 
 def codex_remove() -> str:
     cfg = _codex_config()
     if not cfg.exists():
-        return "Codex: не найден, пропускаю"
+        return "Codex: " + _("not found, skipping")
     text = cfg.read_text(encoding="utf-8")
     if not _CODEX_BLOCK.search(text):
-        return "Codex: не был подключён"
+        return "Codex: " + _("was not connected")
     _backup(cfg)
     cfg.write_text(_strip_block(text).rstrip() + "\n", encoding="utf-8")
-    return "Codex: отключён"
+    return "Codex: " + _("disconnected")
 
 
 # --- Cline (VS Code extension): cline_mcp_settings.json ------------------------------------
@@ -138,21 +140,21 @@ def _load_json(p: Path) -> dict:
     try:
         return json.loads(p.read_text(encoding="utf-8") or "{}")
     except json.JSONDecodeError as e:
-        raise RuntimeError(f"{p} — невалидный JSON, не трогаю: {e}")
+        raise RuntimeError(_("{path} is not valid JSON, leaving it untouched: {e}", path=p, e=e))
 
 
 def cline_status() -> str:
     files = _cline_settings()
     if not files:
-        return "не найден (нет расширения Cline)"
+        return _("not found (Cline extension not installed)")
     ok = [f for f in files if SERVER_NAME in (_load_json(f).get("mcpServers") or {})]
-    return "подключён" if ok else "не подключён"
+    return _("connected") if ok else _("not connected")
 
 
 def cline_add(python: str | None) -> str:
     files = _cline_settings()
     if not files:
-        return "Cline: не найден, пропускаю"
+        return "Cline: " + _("not found, skipping")
     cmd, args = _server_cmd(python)
     for f in files:
         data = _load_json(f)
@@ -160,7 +162,7 @@ def cline_add(python: str | None) -> str:
         data.setdefault("mcpServers", {})[SERVER_NAME] = {"command": cmd, "args": args, "disabled": False}
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    return f"Cline: подключён ({len(files)} редактор(а))"
+    return "Cline: " + _("connected ({n} editor(s))", n=len(files))
 
 
 def cline_remove() -> str:
@@ -173,7 +175,7 @@ def cline_remove() -> str:
             del data["mcpServers"][SERVER_NAME]
             f.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
             done += 1
-    return "Cline: отключён" if done else "Cline: не был подключён"
+    return "Cline: " + (_("disconnected") if done else _("was not connected"))
 
 
 ADD = {"claude": claude_add, "codex": codex_add, "cline": cline_add}

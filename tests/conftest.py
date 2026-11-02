@@ -87,6 +87,16 @@ enabled = false
         return dbmod.connect(self.data / "brain.db")
 
 
+@pytest.fixture(autouse=True)
+def english(monkeypatch):
+    """Tests run in English unless they switch the language themselves."""
+    from agent_recall import i18n
+    monkeypatch.setenv("AGENT_RECALL_LANG", "en")
+    i18n.set_lang()
+    yield
+    i18n._lang = None
+
+
 @pytest.fixture
 def env(tmp_path) -> Env:
     return Env(tmp_path)

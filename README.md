@@ -184,9 +184,12 @@ Don't copy `brain.db` by hand while a sync runs (WAL mode) — use the commands 
 
 Agents are good at keyword search: they rephrase, try synonyms and both languages, and read what they find. For a personal archive BM25 over SQLite is fast, free, and transparent. If semantic search ever becomes necessary, [sqlite-vec](https://github.com/asg017/sqlite-vec) with a local embedding model fits into the same file.
 
+## Language
+
+The interface speaks **English** and **Russian**. It follows your OS language; override with `language = "en"` / `"ru"` in `config.toml` or the `AGENT_RECALL_LANG` environment variable. The language also sets the language of handoff briefings. New languages: add a dictionary to `agent_recall/locales.py` (a test lists anything left untranslated).
+
 ## Status and limitations
 
-- The CLI speaks **Russian** for now; English messages are on the roadmap (PRs welcome).
 - Windows is the primary platform (installer, scheduler); macOS/Linux work via pip.
 - Claude Code / Codex log formats are undocumented and change; collectors are defensive, but expect occasional fixes.
 - No OCR for screenshots yet (Windows has a built-in OCR engine — a natural next step).
@@ -213,6 +216,7 @@ agent_recall/
   redact.py        secret masking
   integrations.py  MCP registration in Claude Code, Codex, Cline
   environment.py   detection of vaults, folders, tokens (brain doctor)
+  i18n.py, locales.py  interface language and translations
   mcp_server.py    MCP server
 brainctl.ps1       Windows installer and manager
 install.cmd        double-click installer

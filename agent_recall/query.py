@@ -16,7 +16,7 @@ def fts_query(q: str, mode: str = "and") -> str:
     words = _WORD.findall(q)
     if not words:
         return '""'
-    # prefix match helps Russian morphology: "сертификат" finds "сертификаты", "сертификатов"
+    # prefix match helps inflected languages: "certificat" finds "certificates", and Russian word forms too
     terms = [f'"{w}"*' if len(w) >= 4 else f'"{w}"' for w in words]
     return (" OR " if mode == "or" else " ").join(terms)
 
