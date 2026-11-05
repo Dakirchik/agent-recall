@@ -17,6 +17,17 @@ from .i18n import _
 
 MAX_ATTACHMENT_CHARS = 4000
 MAX_TOOL_CHARS = 1500
+CLAUDE_COMPANION_ARCHIVES = ("projects-*.zip", "frames-*.zip", "memories-*.zip", "feedback-*.zip", "light_metadata-*.zip")
+
+
+def export_bundle(path: Path) -> Path:
+    """Find companion ZIPs when Extract All put the JSON one folder deeper."""
+    folder = path if path.is_dir() else path.parent
+    if not any(next(folder.glob(pattern), None) for pattern in CLAUDE_COMPANION_ARCHIVES):
+        parent = folder.parent
+        if any(next(parent.glob(pattern), None) for pattern in CLAUDE_COMPANION_ARCHIVES):
+            return parent
+    return folder
 
 
 def load_conversations(path: str | Path) -> list[dict]:
@@ -25,7 +36,18 @@ def load_conversations(path: str | Path) -> list[dict]:
     if path.is_dir():
         files = sorted(path.rglob("conversations.json"), key=lambda p: len(p.parts))
         if not files:
-            raise FileNotFoundError(_("No conversations.json in folder {path}", path=path))
+            archives = sorted(path.glob("conversations*.zip"))
+            if not archives:
+                raise FileNotFoundError(_("No conversations.json in folder {path}", path=path))
+            combined, seen = [], set()
+            for archive in archives:
+                for conversation in load_conversations(archive):
+                    cid = conversation.get("uuid") or conversation.get("conversation_id") or conversation.get("id")
+                    if cid is None or cid not in seen:
+                        combined.append(conversation)
+                        if cid is not None:
+                            seen.add(cid)
+            return combined
         path = files[0]
     if path.suffix.lower() == ".zip":
         with zipfile.ZipFile(path) as z:
@@ -38,7 +60,7 @@ def load_conversations(path: str | Path) -> list[dict]:
         data = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(data, dict):  # some exports wrap the list
         data = data.get("conversations") or data.get("items") or []
-    if not isinstance(data, list):
+    if not isinstance(data, list) or not all(isinstance(c, dict) for c in data):
         raise ValueError(_("Unexpected conversations.json format"))
     return data
 

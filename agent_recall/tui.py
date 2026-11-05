@@ -370,7 +370,7 @@ def select(term: Term, items: list[Item], *, title: str = "", crumbs: str = "", 
         elif two_col:
             list_w, list_h = max(34, int(cols * 0.42)), body_h
         else:
-            list_w, list_h = cols, max(5, body_h * 5 // 10)
+            list_w, list_h = cols, min(len(vis), max(5, body_h * 5 // 10))
         # keep the cursor visible
         if cursor < offset:
             offset = cursor
@@ -592,7 +592,7 @@ def ask_text(term: Term, prompt: str, *, title: str = "", crumbs: str = "", defa
         out.append("")
         out += ["  " + paint(n, cols - 4) for n in wrap(note or [], cols - 4)]
         out += [""] * (rows - 1 - len(out))
-        out.append(footer(T("Enter done  Esc cancel  Backspace erase", "Enter готово  Esc отмена  Backspace стереть"), cols))
+        out.append(footer(T("Enter done  Del clear  Esc cancel  Backspace erase", "Enter готово  Del очистить  Esc отмена  Backspace стереть"), cols))
         term.draw(out)
         k = term.key()
         if k == "enter":
@@ -601,6 +601,8 @@ def ask_text(term: Term, prompt: str, *, title: str = "", crumbs: str = "", defa
             return None
         if k == "backspace":
             text = text[:-1]
+        elif k in ("delete", "\x15"):
+            text = ""
         elif k == "space":
             text += " "
         elif len(k) == 1 and k.isprintable():

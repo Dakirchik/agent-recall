@@ -12,6 +12,8 @@ sync, importers, integrations). Screens:
 from __future__ import annotations
 
 import io
+import json
+import os
 import re
 import sqlite3
 from contextlib import closing, redirect_stdout
@@ -22,7 +24,7 @@ from types import SimpleNamespace
 from . import db as dbmod
 from . import handoff as ho
 from . import integrations, query
-from .config import expand
+from .config import expand, remember_import, set_config_value
 from .i18n import T, lang, set_lang
 from .tui import (BOLD, CYAN, DIM, GREEN, RED, YELLOW, Item, Line, Quit, Term, keys_hint, message,
                   select, view, ask_text)
@@ -79,6 +81,7 @@ class App:
         self.cfg = cfg
         self.t = term
         self.db_path = expand(cfg["db_path"])
+        self._import_archive_root = expand(cfg.get("import_archive_dir") or self.db_path.parent / "imports")
         self._titles: dict[str, str] = {}
         self._session_info: dict[str, list[Line]] = {}
 
@@ -129,9 +132,11 @@ class App:
             Item("sync", T("Sync now", "Синхронизировать"), last_sync, DIM),
             Item("import", T("Import a chat export (Claude app, ChatGPT)…", "Импорт экспорта чатов (Claude, ChatGPT)…")),
             Item("#setup", T("Setup", "Настройка"), header=True),
+            Item("auto_sync", T("Auto-sync", "Автосинхронизация")),
             Item("agents", T("Agents (MCP)", "Агенты (MCP)")),
             Item("status", T("Status and paths", "Состояние и пути")),
             Item("language", T("Language: English", "Язык: русский")),
+            Item("help", T("Help", "Помощь")),
             Item("quit", T("Quit", "Выход")),
         ]
         about = {
@@ -148,16 +153,24 @@ class App:
                          (T("Projects are rules in config.toml: working folder, repo, note path, tags, Jira keys.",
                             "Проекты — это правила в config.toml: рабочая папка, репозиторий, путь заметки, теги, ключи Jira."), DIM)],
             "sync": [(T("Pull new data from all sources right now.", "Забрать новые данные из всех источников прямо сейчас."), ""), ("", ""),
-                     (T("It also runs on a schedule (brainctl task).", "Это же происходит по расписанию (brainctl task)."), DIM)],
-            "import": [(T("Chats from the Claude app and ChatGPT live on their servers. Request a data export in their "
-                          "settings, download the zip and import it here. Re-importing adds only new messages.",
-                          "Чаты приложения Claude и ChatGPT хранятся на их серверах. Запросите экспорт данных в настройках, "
-                          "скачайте zip и импортируйте здесь. Повторный импорт добавит только новое."), "")],
+                     (T("Optional scheduling is available under Auto-sync.", "Расписание можно включить в разделе «Автосинхронизация»."), DIM)],
+            "import": [(T("Add a Claude or ChatGPT export to shared memory, or transfer Claude chats into Codex history.",
+                          "Добавить экспорт Claude или ChatGPT в общую память или перенести чаты Claude в историю Codex."), ""),
+                       ("", ""), (T("Before importing, read Prepare Claude export or Prepare ChatGPT export in this menu.",
+                                        "Перед импортом прочитайте «Подготовка экспорта Claude» или «Подготовка экспорта ChatGPT» в этом меню."), DIM)],
+            "auto_sync": [(T("Choose whether to run sync automatically, and how often.",
+                              "Выберите, запускать ли синхронизацию автоматически и как часто."), ""),
+                          (T("Disabling removes the OS scheduler job. Your data and manual sync remain available.",
+                             "При отключении задача удаляется из планировщика ОС. Данные и ручная синхронизация остаются доступны."), DIM)],
             "agents": [(T("Connect the memory to Claude Code, Codex and Cline over MCP, so they can search it themselves.",
                           "Подключить память к Claude Code, Codex и Cline через MCP, чтобы они сами искали в ней."), "")],
             "status": [(T("Where the config, database and logs live; what each source finds; which agents are connected.",
                           "Где лежат конфиг, база и логи; что видит каждый источник; какие агенты подключены."), "")],
             "language": [(T("Switch the interface and handoff language.", "Переключить язык интерфейса и выжимок handoff."), "")],
+            "help": [(T("Find and independently check scheduled sync on Windows, macOS or Linux.",
+                        "Как найти и самостоятельно проверить задачу автосинхронизации в Windows, macOS или Linux."), ""),
+                     (T("Includes expected results when enabled and after removal, plus checks for older installations.",
+                        "Ожидаемые результаты при включении и после удаления, а также проверка старых установок."), DIM)],
             "quit": [],
         }
         res = select(self.t, items, title=T("What do you want to do?", "Что сделать?"), crumbs=T("Home", "Главная"),
@@ -499,22 +512,106 @@ class App:
         message(self.t, lines, title=T("Sync finished", "Синхронизация завершена"))
 
     def screen_import(self) -> None:
+        from .export_help import export_guide
+        details = {
+            "memory": [(T("Before you start, read Prepare Claude export or Prepare ChatGPT export below.",
+                           "Перед началом прочитайте «Подготовка экспорта Claude» или «Подготовка экспорта ChatGPT» ниже."), YELLOW),
+                       (T("Chats become available in Sessions, Search and your connected AI agents.",
+                           "Чаты появятся в «Сессиях», «Поиске» и станут доступны подключённым ИИ-агентам."), ""),
+                       (T("Accepts Claude and ChatGPT exports. Re-importing adds new or changed messages.",
+                          "Поддерживает экспорт Claude и ChatGPT. Повторный импорт добавляет новые и изменённые сообщения."), DIM)],
+            "codex": [(T("Before you start, read Prepare Claude export below.",
+                          "Перед началом прочитайте «Подготовка экспорта Claude» ниже."), YELLOW),
+                      ("", ""),
+                      (T("1. Request and download your Claude data export.",
+                         "1. Запросите и скачайте экспорт данных Claude."), ""),
+                      (T("2. Keep all files together. Extract conversations.json; leave the other ZIPs compressed.",
+                         "2. Сохраните все файлы рядом. Извлеките conversations.json; остальные ZIP оставьте как есть."), ""),
+                      (T("3. Fully close Codex, choose the export folder and where to save the archive.",
+                         "3. Полностью закройте Codex, выберите папку экспорта и место для архива."), ""),
+                      (T("4. Confirm the import. Open Codex again after it finishes.",
+                         "4. Подтвердите импорт. После его завершения откройте Codex заново."), ""),
+                      ("", ""),
+                      (T("Chats appear in Codex history with the [Claude] title prefix.",
+                          "Чаты появятся в истории Codex с префиксом [Claude] в названиях."), ""),
+                      (T("Experimental. Projects are not created; artifact files are saved in a local archive.",
+                         "Экспериментально. Проекты не создаются; файлы артефактов сохраняются в локальном архиве."), DIM)],
+            "claude": export_guide("claude"), "chatgpt": export_guide("chatgpt"),
+        }
+        start = "memory"
+        while True:
+            res = select(self.t, [
+                Item("#where", T("Where should the chats appear?", "Где должны появиться чаты?"), header=True),
+                Item("memory", T("Add to shared memory", "Добавить в общую память"), "Claude, ChatGPT", DIM),
+                Item("codex", T("Import into Codex history", "Импорт в историю Codex"), "Claude", DIM),
+                Item("#help", T("Read before you start", "Прочитайте перед началом"), header=True),
+                Item("claude", T("Prepare Claude export", "Подготовка экспорта Claude")),
+                Item("chatgpt", T("Prepare ChatGPT export", "Подготовка экспорта ChatGPT")),
+            ], title=T("Import chats", "Импорт чатов"), crumbs=T("Home › Import", "Главная › Импорт"),
+                start=start, details=lambda it: details[it.key], hint=keys_hint(search=False))
+            if res.back:
+                return
+            start = res.keys[0]
+            if start in ("claude", "chatgpt"):
+                view(self.t, details[start], title=T("Prepare export", "Подготовка экспорта") + " · "
+                     + {"claude": "Claude", "chatgpt": "ChatGPT"}[start],
+                     crumbs=T("Import", "Импорт") + " › " + start)
+            elif start == "memory":
+                self.import_memory()
+            else:
+                self.import_codex()
+
+    def ask_export(self, title: str, *, claude_only: bool = False) -> Path | None:
+        from .export_help import CLAUDE_SETTINGS, CHATGPT_SETTINGS, import_problem
+        from .importers import detect_format, load_conversations
+        notes = [(T("Already downloaded? Paste the ZIP or folder path, or drag it into this terminal.",
+                    "Уже скачали? Вставьте путь к ZIP или папке либо перетащите их в терминал."), ""),
+                 (T("Keep companion export ZIPs in the same folder to preserve documents and artifacts.",
+                    "Храните остальные ZIP-файлы экспорта в той же папке, чтобы сохранить документы и артефакты."), DIM),
+                 ("", ""), (T("Claude: Settings → Privacy → Export data", "Claude: Settings → Privacy → Export data"), ""),
+                 (CLAUDE_SETTINGS, CYAN)]
+        if claude_only:
+            notes = [(T("Fully close the Codex desktop app before transferring chats.",
+                        "Перед переносом чатов полностью закройте приложение Codex."), YELLOW),
+                     (T("Choose the whole export folder. Extract conversations.json from conversations-000.zip; leave other ZIPs compressed.",
+                        "Выберите всю папку экспорта. Извлеките conversations.json из conversations-000.zip; остальные ZIP оставьте как есть."), ""),
+                     (T("Expected: conversations.json, frames-000.zip, projects-000.zip, and any other export ZIPs.",
+                        "Пример: conversations.json, frames-000.zip, projects-000.zip и остальные ZIP экспорта."), DIM),
+                     (T("Paste or drag the folder path into this terminal.", "Вставьте путь к папке или перетащите её в терминал."), "")]
+        if not claude_only:
+            notes += [(T("ChatGPT: Settings → Data controls → Export data", "ChatGPT: Settings → Data controls → Export data"), ""),
+                      (CHATGPT_SETTINGS, CYAN)]
+        notes += [(T("Need the full instructions? Esc returns to the import menu.",
+                     "Нужна полная инструкция? Esc вернёт в меню импорта."), DIM)]
+        while True:
+            path = ask_text(self.t, T("Export ZIP, folder or conversations.json:", "ZIP экспорта, папка или conversations.json:"),
+                            title=title, note=notes)
+            if not path:
+                return None
+            p = expand(path.strip().strip('"').strip("'"))
+            if p.exists():
+                try:
+                    data = load_conversations(p)
+                    fmt = detect_format(data)
+                    if fmt is None:
+                        raise ValueError(T("This file does not contain a supported chat export.",
+                                           "Этот файл не содержит поддерживаемого экспорта чатов."))
+                    if claude_only and fmt != "claude":
+                        raise ValueError(T("Transferring to Codex requires a Claude export. Choose shared memory for a ChatGPT export.",
+                                           "Для переноса в Codex нужен экспорт Claude. Для экспорта ChatGPT выберите общую память."))
+                    return p
+                except Exception as e:
+                    message(self.t, import_problem(e), title=T("Check your export", "Проверьте экспорт"))
+                    continue
+            message(self.t, [(T(f"Not found: {p}", f"Не найдено: {p}"), RED),
+                             (T("Copy the full path from your file manager and try again.",
+                                "Скопируйте полный путь из файлового менеджера и попробуйте ещё раз."), "")], title=title)
+
+    def import_memory(self) -> None:
         from .importers import import_export
         from .projects import assign_projects
-        path = ask_text(self.t, T("Path to the export (.zip, folder or conversations.json):",
-                                  "Путь к экспорту (.zip, папка или conversations.json):"),
-                        title=T("Import a chat export", "Импорт экспорта чатов"),
-                        note=[(T("Claude: Settings → Privacy → Export data (web or desktop). The link in the email expires in 24 hours.",
-                                 "Claude: Settings → Privacy → Export data (сайт или десктоп). Ссылка из письма действует 24 часа."), ""),
-                              (T("ChatGPT: Settings → Data controls → Export data.", "ChatGPT: Settings → Data controls → Export data."), ""),
-                              ("", ""),
-                              (T("Tip: drag the file into this window to paste its path.",
-                                 "Совет: перетащите файл в это окно — путь вставится сам."), DIM)])
-        if not path:
-            return
-        p = expand(path.strip().strip('"').strip("'"))
-        if not p.exists():
-            message(self.t, [(T(f"Not found: {p}", f"Не найдено: {p}"), RED)], title=T("Import", "Импорт"))
+        p = self.ask_export(T("Add chats to shared memory", "Добавить чаты в общую память"))
+        if p is None:
             return
         self.busy(T("Importing…", "Импортирую…"))
         try:
@@ -526,7 +623,8 @@ class App:
                 tagged = assign_projects(conn, self.cfg)
                 conn.commit()
         except Exception as e:
-            message(self.t, [(str(e), RED)], title=T("Import failed", "Импорт не удался"))
+            from .export_help import import_problem
+            message(self.t, import_problem(e), title=T("Import failed", "Импорт не удался"))
             return
         self._titles.clear()
         self._session_info.clear()
@@ -536,7 +634,170 @@ class App:
                          (T("They are now in Sessions and Search.", "Теперь они есть в «Сессиях» и «Поиске»."), "")],
                 title=T("Import finished", "Импорт завершён"))
 
+    def import_codex(self) -> None:
+        from . import codex_bridge
+        from .environment import detect_codex
+        title = T("Import into Codex history", "Импорт в историю Codex")
+        source = self.ask_export(title, claude_only=True)
+        if source is None:
+            return
+        binary = detect_codex()
+        if binary is None:
+            path = ask_text(self.t, T("Codex was not found. Path to its executable:", "Codex не найден. Путь к исполняемому файлу:"),
+                            title=title, note=[(T("Install Codex or open its desktop app once, then try again.",
+                                                                "Установите Codex или один раз откройте его приложение, затем повторите попытку."), "")])
+            if not path:
+                return
+            binary = expand(path.strip().strip('"').strip("'"))
+            if not binary.is_file():
+                message(self.t, [(T(f"Not found: {binary}", f"Не найдено: {binary}"), RED)], title=title)
+                return
+        archive_root = self.ask_import_folder()
+        if archive_root is None:
+            return
+        codex_home = expand(os.environ.get("CODEX_HOME") or "~/.codex")
+        manifest_path = None
+        try:
+            self.busy(T("Reading your export…", "Читаю экспорт…"))
+            manifest_path = codex_bridge.prepare_cached(source, archive_root)
+            remember_import(self.cfg, manifest_path, archive_root=archive_root)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            threads = [t for t in manifest["threads"] if t["messages"]]
+            if not threads:
+                message(self.t, [(T("No chats with messages were found in this export.",
+                                    "В экспорте не найдено чатов с сообщениями."), YELLOW)], title=title)
+                return
+            summary = [(T("Keep the Codex desktop app closed until the transfer finishes.",
+                          "Не открывайте приложение Codex до завершения переноса."), YELLOW),
+                       (T(f"Chats: {len(threads)}", f"Чатов: {len(threads)}"), BOLD),
+                       (T(f"Messages: {sum(t['messages'] for t in threads)}",
+                          f"Сообщений: {sum(t['messages'] for t in threads)}"), ""),
+                       (T("New chats appear in Codex history as [Claude] …, without project assignments.",
+                          "Новые чаты появятся в истории Codex с названиями [Claude] …, без привязки к проектам."), ""),
+                       (T("Existing chats are preserved. Previously transferred chats are reused.",
+                          "Существующие чаты сохраняются. Уже перенесённые чаты используются повторно."), DIM),
+                       (T("Source files and artifacts are saved here:", "Исходные файлы и артефакты сохранены здесь:"), ""),
+                       (str(manifest_path.parent), DIM)]
+            confirm = select(self.t, [Item("transfer", T("Transfer chats", "Перенести чаты")),
+                                      Item("cancel", T("Cancel", "Отмена"))], title=title,
+                             details=lambda it: summary, hint=keys_hint(details=False, search=False))
+            if confirm.back or confirm.keys == ["cancel"]:
+                return
+            self.busy(T("Transferring chats into Codex…", "Переношу чаты в Codex…"))
+            codex_bridge.install(manifest_path, binary, codex_home)
+            self.busy(T("Checking the transferred messages…", "Проверяю перенесённые сообщения…"))
+            report = codex_bridge.verify(manifest_path, binary, codex_home)
+        except Exception as e:
+            from .export_help import import_problem
+            lines = import_problem(e)
+            if manifest_path:
+                lines += [(T("Your prepared archive is saved here; retrying will reuse it:",
+                             "Подготовленный архив сохранён здесь; повторная попытка использует его:"), ""),
+                          (str(manifest_path.parent), DIM)]
+            message(self.t, lines, title=T("Transfer failed", "Перенос не удался"))
+            return
+        message(self.t, [(T("The transfer is complete. Open the Codex desktop app again.",
+                            "Перенос завершён. Теперь откройте приложение Codex заново."), GREEN),
+                         (T(f"Chats: {report['threads']}", f"Чатов: {report['threads']}"), ""),
+                         (T(f"Messages verified: {report['messages']}", f"Сообщений проверено: {report['messages']}"), GREEN),
+                         (T("Open Codex chat history and search for [Claude].", "Откройте историю чатов Codex и найдите [Claude]."), ""),
+                         (T("Original dates are preserved, so older chats may be lower in the list.",
+                            "Исходные даты сохранены, поэтому старые чаты могут быть ниже в списке."), DIM),
+                         ("", ""), (T("Local archive:", "Локальный архив:"), ""), (str(manifest_path.parent), DIM)],
+                title=T("Transfer finished", "Перенос завершён"))
+
+    def ask_import_folder(self) -> Path | None:
+        title = T("Save the import archive", "Сохранить архив импорта")
+        while True:
+            path = ask_text(self.t, T("Where should the local import archive be saved?",
+                                      "Где сохранить локальный архив импорта?"),
+                            title=title, default=str(self._import_archive_root), note=[
+                                (T("Press Enter to use the suggested folder, or Del to enter another path.",
+                                   "Нажмите Enter для предложенной папки или Del, чтобы указать другой путь."), ""),
+                                (T("Source messages, documents and artifacts will be saved in a separate subfolder for each export.",
+                                   "Исходные сообщения, документы и артефакты сохранятся в отдельной подпапке для каждого экспорта."), ""),
+                                (T("Codex sessions are stored separately in its own history folder.",
+                                   "Сессии Codex хранятся отдельно, в его собственной папке истории."), DIM),
+                                (T("Choose a permanent location: this archive is also the chats' working folder.",
+                                   "Выберите постоянное место: этот архив также служит рабочей папкой чатов."), DIM)])
+            if path is None:
+                return None
+            root = expand((path.strip().strip('"').strip("'") or str(self._import_archive_root))).resolve()
+            if root.exists() and not root.is_dir():
+                message(self.t, [(T("This path is a file. Choose a folder or enter a new folder path.",
+                                    "По этому пути находится файл. Выберите папку или укажите путь к новой папке."), RED)], title=title)
+                continue
+            self._import_archive_root = root
+            return root
+
     # -- setup ----------------------------------------------------------------------------------------
+    def screen_help(self) -> None:
+        from .scheduler_help import current_os, scheduler_guide
+        start = current_os()
+        while True:
+            items = [Item(system, name, T("this OS", "эта ОС") if system == current_os() else "", DIM)
+                     for system, name in (("windows", "Windows"), ("macos", "macOS"), ("linux", "Linux"))]
+            res = select(self.t, items, title=T("How to find and check the scheduler", "Как найти и проверить планировщик"),
+                         crumbs=T("Help", "Помощь"), start=start,
+                         details=lambda it: [(T("Choose an OS for step-by-step checks, commands and expected results.",
+                                                "Выберите ОС: откроются пошаговая инструкция, команды и ожидаемые результаты."), ""),
+                                             (T("These instructions do not change scheduled jobs.",
+                                                "Эти инструкции не изменяют задачи планировщика."), DIM)],
+                         hint=keys_hint(details=False, search=False))
+            if res.back:
+                return
+            start = res.keys[0]
+            view(self.t, scheduler_guide(start), title=T("Check the scheduler: ", "Проверка планировщика: ")
+                 + {"windows": "Windows", "macos": "macOS", "linux": "Linux"}[start], crumbs=T("Help", "Помощь"))
+
+    def screen_auto_sync(self) -> None:
+        from .scheduler import Scheduler, ScheduleError
+        scheduler = Scheduler(self.cfg)
+        title = T("Auto-sync", "Автосинхронизация")
+        while True:
+            try:
+                self.busy(T("Checking the scheduler…", "Проверяю планировщик…"))
+                state = scheduler.status()
+                detail = [
+                    (T("Enabled", "Включена") if state.enabled else T("Disabled", "Выключена"), GREEN if state.enabled else DIM),
+                    (T(f"Scheduler: {state.backend}", f"Планировщик: {state.backend}"), DIM),
+                    (T(f"Interval: {state.interval} minutes", f"Интервал: {state.interval} мин."), DIM),
+                    ("", ""),
+                    (T("Runs brain sync on the configured sources in the background. GitHub is contacted if configured.",
+                       "Запускает brain sync для настроенных источников в фоне. Если настроен GitHub, обращается к нему."), ""),
+                    (T("Export ZIPs are imported manually. No AI model calls are made by the scheduler.",
+                       "ZIP-файлы экспорта импортируются вручную. Планировщик не вызывает ИИ-модели."), ""),
+                    (T("Disable removes current and recognized legacy sync jobs from the OS scheduler. Data and manual sync are kept.",
+                       "Отключение удаляет из планировщика текущие и распознанные старые задачи синхронизации. Данные и ручная синхронизация сохраняются."), ""),
+                ]
+                res = select(self.t, [
+                    Item("enable", T("Change interval", "Изменить интервал") if state.enabled else T("Enable…", "Включить…")),
+                    Item("disable", T("Disable and remove scheduled jobs", "Выключить и удалить задачи планировщика")),
+                    Item("help", T("Help: find and check the scheduler", "Помощь: как найти и проверить планировщик")),
+                ], title=title, details=lambda it: detail, hint=keys_hint(details=False, search=False))
+                if res.back:
+                    return
+                if res.keys == ["help"]:
+                    self.screen_help()
+                    continue
+                if res.keys == ["enable"]:
+                    value = ask_text(self.t, T("Interval in minutes (1–1440)", "Интервал в минутах (1–1440)"),
+                                     title=title, default=str(state.interval), note=detail[3:])
+                    if value is None:
+                        continue
+                    try:
+                        interval = int(value)
+                    except ValueError:
+                        raise ScheduleError(T("Enter a whole number of minutes.", "Введите целое число минут."))
+                    scheduler.enable(interval)
+                elif res.keys == ["disable"]:
+                    scheduler.disable()
+                message(self.t, [(T("Schedule updated.", "Расписание обновлено."), GREEN)], title=title)
+            except (ScheduleError, OSError, ValueError) as e:
+                message(self.t, [(T("Could not read or change the schedule.", "Не удалось прочитать или изменить расписание."), RED),
+                                 (str(e), "")], title=title)
+                return
+
     def screen_agents(self) -> None:
         start = None
         while True:
@@ -593,22 +854,11 @@ class App:
         set_lang(new)
 
 
-def set_config_value(path: Path, key: str, value: str) -> None:
-    """Set a top-level `key = "value"` in config.toml, keeping everything else as is."""
-    text = path.read_text(encoding="utf-8") if path.exists() else ""
-    line = f'{key} = "{value}"'
-    pat = re.compile(rf'(?m)^\s*{re.escape(key)}\s*=.*$')
-    first_table = re.search(r"(?m)^\s*\[", text)
-    head = text[: first_table.start()] if first_table else text
-    if pat.search(head):
-        head = pat.sub(line, head, count=1)
-    else:
-        head = line + "\n" + head
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(head + (text[first_table.start():] if first_table else ""), encoding="utf-8")
-
-
 def run(cfg: dict, term: Term | None = None) -> int:
-    with (term or Term()) as t:
-        App(cfg, t).run()
+    try:
+        with (term or Term()) as t:
+            App(cfg, t).run()
+    except KeyboardInterrupt:
+        # Leave the context first so Ctrl+C restores the cursor and normal screen.
+        return 130
     return 0

@@ -3,11 +3,37 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
 from .config import expand
 from .i18n import _
+
+
+def detect_codex() -> Path | None:
+    """Find a native CLI on PATH or in the desktop/VS Code installations."""
+    command = shutil.which("codex.exe" if os.name == "nt" else "codex")
+    if command:
+        return Path(command)
+    home = Path.home()
+    if os.name == "nt":
+        local = Path(os.environ.get("LOCALAPPDATA", home / "AppData/Local"))
+        patterns = [(local / "OpenAI/Codex/bin", "*/codex.exe"),
+                    (home / ".vscode/extensions", "openai.chatgpt-*/bin/windows-x86_64/codex.exe")]
+    elif sys.platform == "darwin":
+        patterns = [(Path("/Applications"), "Codex.app/Contents/Resources/codex"),
+                    (home / "Applications", "Codex.app/Contents/Resources/codex")]
+    else:
+        patterns = [(home / ".local/bin", "codex")]
+    for root, pattern in patterns:
+        try:
+            found = [p for p in root.glob(pattern) if p.is_file()]
+            if found:
+                return max(found, key=lambda p: p.stat().st_mtime)
+        except OSError:
+            continue
+    return None
 
 
 def _appdata_dirs() -> list[Path]:

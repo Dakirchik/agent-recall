@@ -5,7 +5,7 @@
   Messages are in English or Russian: AGENT_RECALL_LANG, `language` in config.toml, or the Windows UI language.
 
 .EXAMPLE
-  .\brainctl.ps1 install                  # everything: Python, environment, config, first sync, scheduler, MCP
+  .\brainctl.ps1 install                  # everything: Python, environment, config, first sync, optional scheduler, MCP
   brainctl status                         # after install the command works from any terminal
   brainctl task add -Interval 30
   brainctl mcp add claude
@@ -21,12 +21,15 @@ param(
     [string]$Vault = "",
     [switch]$Yes,
     [switch]$NoTask,
+    [switch]$AutoSync,
     [switch]$NoMcp,
     [switch]$NoSync,
     [switch]$Purge
 )
 
 $ErrorActionPreference = "Stop"
+$IntervalSpecified = $PSBoundParameters.ContainsKey("Interval")
+if ($AutoSync -and $NoTask) { throw "Use either -AutoSync or -NoTask, not both" }
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 $env:PYTHONUTF8 = "1"
@@ -198,10 +201,6 @@ function Remove-Shims {
 # --- Install made under the old name (brainsync) ---------------------------------------------
 function Remove-LegacyInstall {
     $found = $false
-    if (Get-ScheduledTask -TaskName $LegacyTask -ErrorAction SilentlyContinue) {
-        Unregister-ScheduledTask -TaskName $LegacyTask -Confirm:$false
-        $found = $true
-    }
     if (Test-Path $LegacyAppDir) {
         $oldPy = Join-Path $LegacyAppDir "venv\Scripts\python.exe"
         if (Test-Path $oldPy) {
@@ -214,7 +213,9 @@ function Remove-LegacyInstall {
         $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
         $parts = @($userPath -split ";" | Where-Object { $_ -and $_ -ne $oldBin })
         [Environment]::SetEnvironmentVariable("Path", ($parts -join ";"), "User")
-        try { Remove-Item $LegacyAppDir -Recurse -Force }
+        $expected = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA "brainsync"))
+        if ([IO.Path]::GetFullPath($LegacyAppDir) -ne $expected) { throw "Unexpected legacy install path" }
+        try { Remove-Item -LiteralPath $LegacyAppDir -Recurse -Force }
         catch { Warn (T "Could not remove $LegacyAppDir — close your agents and delete it manually" "Не удалось удалить $LegacyAppDir — закройте агентов и удалите вручную") }
         $found = $true
     }
@@ -223,50 +224,16 @@ function Remove-LegacyInstall {
 
 # --- Scheduler -------------------------------------------------------------------------------
 function Add-SyncTask([int]$minutes) {
-    if (-not (Test-Path $PyW)) { throw (T "agent-recall is not installed. Run: brainctl install" "agent-recall не установлен. Запустите: brainctl install") }
-    $user = "$env:USERDOMAIN\$env:USERNAME"
-    # pythonw has no console window, so the task does not flash every N minutes
-    $action = New-ScheduledTaskAction -Execute $PyW -Argument "-m agent_recall sync" -WorkingDirectory $DataDir
-    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
-        -RepetitionInterval (New-TimeSpan -Minutes $minutes) -RepetitionDuration (New-TimeSpan -Days 3650)
-    # StartWhenAvailable: if the PC was off, the missed run happens when it is back on
-    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries `
-        -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
-    $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
-    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
-        -Principal $principal -Description "agent-recall: shared memory sync for AI agents" -Force | Out-Null
-    Ok (T "Task '$TaskName': every $minutes min." "Задача '$TaskName': каждые $minutes мин.")
+    Invoke-Py @("-m", "agent_recall", "--config", $Config, "auto-sync", "enable", "--interval", "$minutes")
 }
-
 function Remove-SyncTask {
-    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
-        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-        Ok (T "Task '$TaskName' removed" "Задача '$TaskName' удалена")
-    } else { Info (T "No task '$TaskName'" "Задачи '$TaskName' нет") }
+    Invoke-Py @("-m", "agent_recall", "--config", $Config, "auto-sync", "disable")
 }
-
 function Show-SyncTask {
-    $t = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    if (-not $t) { Warn (T "Scheduled task not created (brainctl task add)" "Задача планировщика не создана (brainctl task add)"); return }
-    $i = $t | Get-ScheduledTaskInfo
-    $interval = $t.Triggers[0].Repetition.Interval
-    $result = switch ($i.LastTaskResult) {
-        0       { T "success" "успешно" }
-        267009  { T "running" "выполняется" }
-        267011  { T "has not run yet" "ещё не запускалась" }
-        default { T "code $($i.LastTaskResult)" "код $($i.LastTaskResult)" }
-    }
-    Ok (T "Task '$TaskName': $($t.State), interval $interval" "Задача '$TaskName': $($t.State), интервал $interval")
-    Info (T "Last run: $($i.LastRunTime) ($result)" "Последний запуск: $($i.LastRunTime) ($result)")
-    Info (T "Next run: $($i.NextRunTime)" "Следующий запуск: $($i.NextRunTime)")
+    Invoke-Py @("-m", "agent_recall", "--config", $Config, "auto-sync", "status")
 }
-
 # --- Commands --------------------------------------------------------------------------------
 function Cmd-Install {
-    if ((Test-Path $LegacyAppDir) -or (Get-ScheduledTask -TaskName $LegacyTask -ErrorAction SilentlyContinue)) {
-        Step (T "Migrating from the old version (brainsync)" "Перенос со старой версии (brainsync)")
-        Remove-LegacyInstall
-    }
     Step "Python"
     $sys = Find-Python
     if (-not $sys) { $sys = Install-Python }
@@ -299,9 +266,15 @@ function Cmd-Install {
         Step (T "First sync (may take a couple of minutes)" "Первая синхронизация (может занять пару минут)")
         Invoke-Py @("-m", "agent_recall", "sync")
     }
-    if (-not $NoTask) {
-        Step (T "Schedule" "Автозапуск")
-        Add-SyncTask $Interval
+    Step (T "Optional auto-sync" "Автосинхронизация по желанию")
+    $mode = if ($AutoSync) { "on" } elseif ($NoTask) { "off" } elseif ($Yes) { "preserve" } else { "ask" }
+    $scheduleArgs = @("-m", "agent_recall", "--config", $Config, "auto-sync", "setup", "--mode", $mode)
+    if ($IntervalSpecified) { $scheduleArgs += @("--interval", "$Interval") }
+    Invoke-Py $scheduleArgs
+    # Inspect/migrate the old task before removing the interpreter it refers to.
+    if (Test-Path $LegacyAppDir) {
+        Step (T "Migrating from the old version (brainsync)" "Перенос со старой версии (brainsync)")
+        Remove-LegacyInstall
     }
     if (-not $NoMcp) {
         Step (T "Agent connections (MCP)" "Подключение к агентам (MCP)")
@@ -388,9 +361,9 @@ function Cmd-Task {
     switch ($Action) {
         "add"    { Add-SyncTask $Interval }
         "remove" { Remove-SyncTask }
-        "run"    { Start-ScheduledTask -TaskName $TaskName; Ok (T "Started. Log: brainctl log" "Запущено. Лог: brainctl log") }
-        "pause"  { Disable-ScheduledTask -TaskName $TaskName | Out-Null; Ok (T "Auto-sync paused" "Автосинхронизация приостановлена") }
-        "resume" { Enable-ScheduledTask -TaskName $TaskName | Out-Null; Ok (T "Auto-sync resumed" "Автосинхронизация возобновлена") }
+        "run"    { Invoke-Py @("-m", "agent_recall", "sync") }
+        "pause"  { Remove-SyncTask }
+        "resume" { Add-SyncTask $Interval }
         default  { Show-SyncTask }
     }
 }
@@ -416,9 +389,11 @@ function Cmd-Help {
         Write-Host @"
 brainctl — установка и управление agent-recall
 
-  install [-Interval 15] [-Vault <путь>] [-Yes] [-NoSync] [-NoTask] [-NoMcp]
+  install [-Interval 15] [-Vault <путь>] [-Yes] [-NoSync] [-AutoSync | -NoTask] [-NoMcp]
                          Python (через winget, если нет) → окружение → конфиг →
-                         первая синхронизация → планировщик → подключение к агентам
+                         первая синхронизация → выбор расписания → подключение к агентам
+                         По умолчанию выключена; -Yes сохраняет текущее состояние.
+                         -AutoSync включает, -NoTask отключает и удаляет задачу.
   update [-Source <папка>]  git pull исходников и переустановка
   uninstall [-Purge]     удалить программу; с -Purge ещё и базу с конфигом
 
@@ -446,9 +421,11 @@ brainctl — установка и управление agent-recall
     Write-Host @"
 brainctl — install and manage agent-recall
 
-  install [-Interval 15] [-Vault <path>] [-Yes] [-NoSync] [-NoTask] [-NoMcp]
+  install [-Interval 15] [-Vault <path>] [-Yes] [-NoSync] [-AutoSync | -NoTask] [-NoMcp]
                          Python (via winget if missing) → environment → config →
-                         first sync → scheduler → agent connections
+                         first sync → choose scheduling → agent connections
+                         Off by default; -Yes preserves the current state.
+                         -AutoSync enables; -NoTask disables and removes the job.
   update [-Source <folder>] git pull the sources and reinstall
   uninstall [-Purge]     remove the program; -Purge also deletes the database and config
 

@@ -5,7 +5,7 @@ import zipfile
 
 from agent_recall import integrations, query
 from agent_recall.export import backup_db, export_jsonl
-from agent_recall.importers import import_export
+from agent_recall.importers import import_export, load_conversations
 
 
 def _claude_zip(path):
@@ -29,6 +29,13 @@ def test_claude_export_import_is_idempotent(env, tmp_path):
     assert import_export(c, z)["written"] == 0
     assert query.search(c, "gateway timeout", source="claude_app")
     assert not query.search(c, "hidden")
+
+
+def test_folder_of_export_zips_is_read_without_extraction(tmp_path):
+    for n, cid in enumerate(("one", "two", "one")):
+        with zipfile.ZipFile(tmp_path / f"conversations-{n:03d}.zip", "w") as z:
+            z.writestr("conversations.json", json.dumps([{"uuid": cid, "chat_messages": []}]))
+    assert [c["uuid"] for c in load_conversations(tmp_path)] == ["one", "two"]
 
 
 def test_chatgpt_export_follows_current_branch(env, tmp_path):

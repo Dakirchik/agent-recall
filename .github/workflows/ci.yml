@@ -78,7 +78,10 @@ jobs:
           mkdir -p "$HOME/.claude/projects/demo"; printf '# mine\n' > "$HOME/.zshrc"; cp "$HOME/.zshrc" "$RUNNER_TEMP/zshrc.orig"
           printf '%s\n' '{"type":"user","uuid":"u1","sessionId":"s1","cwd":"/tmp/shop","timestamp":"2026-11-01T10:00:00Z","message":{"role":"user","content":"fix the checkout bug"}}' \
             > "$HOME/.claude/projects/demo/s1.jsonl"
-          ./install.sh -y --python "$(command -v python3)" --no-task --no-mcp
+          ./install.sh -y --python "$(command -v python3)" --no-mcp
+          # -y must not silently enable background scheduling on a new installation.
+          out="$("$HOME/.local/bin/brain" auto-sync status --json)"
+          echo "$out" | python -c 'import json, sys; assert not json.load(sys.stdin)["installed"]'
           grep -q '>>> agent-recall >>>' "$HOME/.zshrc"
           export PATH="$HOME/.local/bin:$PATH"
           out="$(brain search checkout)"; grep -q "fix the checkout bug" <<<"$out"

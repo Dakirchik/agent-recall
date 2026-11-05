@@ -2,9 +2,36 @@
 from __future__ import annotations
 
 import os
+import json
+import re
 import tomllib
 from pathlib import Path
 from typing import Any
+
+
+def set_config_value(path: Path, key: str, value: str | list[str]) -> None:
+    """Set a top-level TOML string/list while preserving existing tables."""
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    line = f"{key} = {json.dumps(value, ensure_ascii=False)}"
+    pat = re.compile(rf'(?m)^\s*{re.escape(key)}\s*=.*$')
+    first_table = re.search(r"(?m)^\s*\[", text)
+    head = text[: first_table.start()] if first_table else text
+    head = pat.sub(lambda _match: line, head, count=1) if pat.search(head) else line + "\n" + head
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(head + (text[first_table.start():] if first_table else ""), encoding="utf-8")
+
+
+def remember_import(cfg: dict, manifest: Path, *, archive_root: Path | None = None) -> None:
+    """Remember archive locations so they remain visible after restarting the UI."""
+    archive = str(manifest.resolve().parent)
+    locations = [p for p in dict.fromkeys(cfg.get("import_archives", [])) if p != archive] + [archive]
+    path = Path(cfg["_config_path"])
+    if archive_root is not None:
+        root = str(archive_root.resolve())
+        set_config_value(path, "import_archive_dir", root)
+        cfg["import_archive_dir"] = root
+    set_config_value(path, "import_archives", locations)
+    cfg["import_archives"] = locations
 
 def data_home() -> Path:
     """Where config, database and log live. AGENT_RECALL_HOME overrides; an existing

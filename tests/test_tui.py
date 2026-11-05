@@ -4,7 +4,7 @@ import io
 
 import pytest
 
-from agent_recall.tui import Item, Quit, Term, fit, select, strip_ansi, width
+from agent_recall.tui import Item, Quit, Term, ask_text, fit, select, strip_ansi, width
 
 
 def term(keys, size=(110, 30)):
@@ -24,6 +24,12 @@ def test_width_and_fit():
     assert width("Дакир") == 5 and width("日本") == 4
     assert fit("Привет мир", 6) == "Приве…"
     assert width(fit("abc", 5)) == 5
+
+
+def test_text_input_accepts_default_or_replaces_it_with_delete():
+    assert ask_text(term(["enter"]), "Folder:", default="suggested") == "suggested"
+    assert ask_text(term(["delete", "n", "e", "w", "enter"]), "Folder:", default="suggested") == "new"
+    assert ask_text(term(["esc"]), "Folder:", default="suggested") is None
 
 
 def test_checkboxes_skip_headers_and_disabled():

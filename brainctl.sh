@@ -8,7 +8,7 @@
 # removes the installation.
 #
 #   ./brainctl.sh install [--interval N] [--vault DIR] [--python PATH] [--lang en|ru|auto]
-#                         [-y] [--no-path] [--no-sync] [--no-task] [--no-mcp]
+#                         [-y] [--no-path] [--no-sync] [--auto-sync | --no-task] [--no-mcp]
 #   brainctl status | paths | config | log [follow] | sync | doctor
 #   brainctl task [add|remove|run|pause|resume] [--interval N]
 #   brainctl mcp [add|remove] [all|claude|codex|cline]
@@ -27,9 +27,6 @@ VPY="$VENV/bin/python"
 STATE_FILE="$APP_DIR/install.env"
 MARK_BEGIN="# >>> agent-recall >>>"
 MARK_END="# <<< agent-recall <<<"
-LABEL="com.agent-recall.sync"                         # launchd
-UNIT="agent-recall"                                   # systemd: agent-recall.service / .timer
-CRON_MARK="# agent-recall sync"
 MIN_MAJOR=3
 MIN_MINOR=11
 
@@ -39,8 +36,8 @@ elif [ ! -e "$HOME/.agent-recall" ] && [ -d "$HOME/.brainsync" ]; then DATA_DIR=
 else DATA_DIR="$HOME/.agent-recall"; fi
 CONFIG_FILE="$DATA_DIR/config.toml"
 
-YES=0; PURGE=0; NO_PATH=0; NO_SYNC=0; NO_TASK=0; NO_MCP=0
-INTERVAL=15; VAULT=""; PYTHON_OPT=""; LANG_OPT=""; ACTION=""; TARGET="all"
+YES=0; PURGE=0; NO_PATH=0; NO_SYNC=0; NO_TASK=0; AUTO_SYNC=0; NO_MCP=0
+INTERVAL=""; VAULT=""; PYTHON_OPT=""; LANG_OPT=""; ACTION=""; TARGET="all"
 
 # ---- language: same priority as in Python (agent_recall/i18n.py) ----------------------------
 detect_lang() {
@@ -299,181 +296,18 @@ load_state() {
 
 # ---- scheduled sync -----------------------------------------------------------------------------------
 
-scheduler() {  # launchd | systemd | cron | none
-  case "$(os_name)" in
-    macos) echo launchd; return ;;
-    linux)
-      if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then echo systemd; return; fi
-      if command -v crontab >/dev/null 2>&1; then echo cron; return; fi ;;
-  esac
-  echo none
-}
-
-plist_path() { echo "$HOME/Library/LaunchAgents/$LABEL.plist"; }
-unit_dir() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"; }
-
-# Read the whole crontab first, then write it: piping `crontab -l` straight into `crontab -`
-# can truncate it on some implementations.
-cron_get() { crontab -l 2>/dev/null || true; }
-cron_put() { if [ -n "$1" ]; then printf '%s\n' "$1" | crontab -; else crontab -r 2>/dev/null || printf '' | crontab -; fi; }
-
-xml_escape() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
-
-task_add() {
-  [ -x "$VPY" ] || fail "$(t "agent-recall is not installed. Run: ./brainctl.sh install" "agent-recall не установлен. Запустите: ./brainctl.sh install")"
-  case "$INTERVAL" in ''|*[!0-9]*) fail "--interval: $(t "a number of minutes" "число минут")" ;; esac
-  [ "$INTERVAL" -ge 1 ] || fail "--interval: $(t "at least 1 minute" "не меньше 1 минуты")"
-  mkdir -p "$DATA_DIR"
-  task_remove quiet
-  case "$(scheduler)" in
-    launchd)
-      local p; p="$(plist_path)"; mkdir -p "$(dirname "$p")"
-      cat > "$p" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>$LABEL</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>$(xml_escape "$VPY")</string>
-    <string>-X</string><string>utf8</string>
-    <string>-m</string><string>agent_recall</string><string>sync</string>
-  </array>
-  <key>StartInterval</key><integer>$((INTERVAL * 60))</integer>
-  <key>RunAtLoad</key><true/>
-  <key>ProcessType</key><string>Background</string>
-  <key>LowPriorityIO</key><true/>
-  <key>WorkingDirectory</key><string>$(xml_escape "$DATA_DIR")</string>
-  <key>StandardOutPath</key><string>$(xml_escape "$DATA_DIR/launchd.log")</string>
-  <key>StandardErrorPath</key><string>$(xml_escape "$DATA_DIR/launchd.log")</string>
-</dict>
-</plist>
-EOF
-      launchctl bootstrap "gui/$(id -u)" "$p" 2>/dev/null || launchctl load -w "$p" 2>/dev/null \
-        || warn "$(t "launchctl could not load the job; it will start at the next login" "launchctl не загрузил задачу; она запустится при следующем входе")"
-      ok "$(t "launchd job $LABEL: every $INTERVAL min." "задача launchd $LABEL: каждые $INTERVAL мин.")" ;;
-    systemd)
-      local d; d="$(unit_dir)"; mkdir -p "$d"
-      cat > "$d/$UNIT.service" <<EOF
-[Unit]
-Description=agent-recall: shared memory sync for AI agents
-
-[Service]
-Type=oneshot
-ExecStart="$VPY" -X utf8 -m agent_recall sync
-WorkingDirectory=$DATA_DIR
-Nice=10
-IOSchedulingClass=idle
-EOF
-      cat > "$d/$UNIT.timer" <<EOF
-[Unit]
-Description=agent-recall sync every $INTERVAL min
-
-[Timer]
-OnBootSec=2min
-OnUnitActiveSec=${INTERVAL}min
-Unit=$UNIT.service
-
-[Install]
-WantedBy=timers.target
-EOF
-      systemctl --user daemon-reload
-      systemctl --user enable --now "$UNIT.timer" >/dev/null 2>&1 || fail "$(t "systemctl could not enable the timer" "systemctl не смог включить таймер")"
-      ok "$(t "systemd user timer $UNIT.timer: every $INTERVAL min." "таймер systemd $UNIT.timer: каждые $INTERVAL мин.")"
-      info "$(t "It runs while you are logged in. To sync without a session too: loginctl enable-linger ${USER:-$(id -un)}" "Работает, пока вы вошли в систему. Чтобы и без сеанса: loginctl enable-linger ${USER:-$(id -un)}")" ;;
-    cron)
-      local spec
-      if [ "$INTERVAL" -lt 60 ]; then spec="*/$INTERVAL * * * *"
-      else spec="0 */$(( (INTERVAL + 59) / 60 )) * * *"; fi
-      local cur new
-      cur="$(cron_get | grep -vF "$CRON_MARK" || true)"
-      new="$(printf '%s %s -X utf8 -m agent_recall sync >/dev/null 2>&1 %s' "$spec" "$(sh_quote "$VPY")" "$CRON_MARK")"
-      cron_put "${cur:+$cur
-}$new"
-      ok "$(t "cron: every $INTERVAL min." "cron: каждые $INTERVAL мин.")" ;;
-    *) warn "$(t "No scheduler found (launchd, systemd or cron). Run brain sync yourself or add it to your scheduler." "Планировщик не найден (launchd, systemd или cron). Запускайте brain sync сами или добавьте в свой планировщик.")" ;;
-  esac
-}
-
-task_remove() {  # task_remove [quiet]
-  local found=0 p d
-  p="$(plist_path)"
-  if [ "$(os_name)" = macos ] && [ -f "$p" ]; then
-    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || launchctl unload -w "$p" 2>/dev/null || true
-    rm -f "$p"; found=1
-  fi
-  d="$(unit_dir)"
-  if [ -f "$d/$UNIT.timer" ]; then
-    systemctl --user disable --now "$UNIT.timer" >/dev/null 2>&1 || true
-    rm -f "$d/$UNIT.timer" "$d/$UNIT.service"
-    systemctl --user daemon-reload >/dev/null 2>&1 || true
-    found=1
-  fi
-  if command -v crontab >/dev/null 2>&1 && cron_get | grep -qF "$CRON_MARK"; then
-    cron_put "$(cron_get | grep -vF "$CRON_MARK" || true)"
-    found=1
-  fi
-  [ "${1:-}" = quiet ] && return 0
-  if [ "$found" = 1 ]; then ok "$(t "scheduled sync removed" "синхронизация по расписанию убрана")"
-  else info "$(t "no scheduled sync" "синхронизации по расписанию нет")"; fi
-}
-
-task_run() {
-  case "$(scheduler)" in
-    launchd) launchctl kickstart "gui/$(id -u)/$LABEL" 2>/dev/null || brain sync ;;
-    systemd) systemctl --user start "$UNIT.service" 2>/dev/null || brain sync ;;
-    *) brain sync ;;
-  esac
-  ok "$(t "started — log: brainctl log" "запущено — лог: brainctl log")"
-}
-
-task_pause() {
-  case "$(scheduler)" in
-    launchd) launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || launchctl unload "$(plist_path)" 2>/dev/null || true ;;
-    systemd) systemctl --user disable --now "$UNIT.timer" >/dev/null 2>&1 || true ;;
-    cron) cron_put "$(cron_get | sed "/$CRON_MARK\$/s/^\\([^#]\\)/#\\1/")" ;;
-  esac
-  ok "$(t "auto-sync paused (resume: brainctl task resume)" "автосинхронизация приостановлена (вернуть: brainctl task resume)")"
-}
-
-task_resume() {
-  case "$(scheduler)" in
-    launchd) launchctl bootstrap "gui/$(id -u)" "$(plist_path)" 2>/dev/null || launchctl load -w "$(plist_path)" 2>/dev/null || true ;;
-    systemd) systemctl --user enable --now "$UNIT.timer" >/dev/null 2>&1 || true ;;
-    cron) cron_put "$(cron_get | sed "/$CRON_MARK\$/s/^#//")" ;;
-  esac
-  ok "$(t "auto-sync resumed" "автосинхронизация возобновлена")"
-}
-
-task_status() {
-  case "$(scheduler)" in
-    launchd)
-      if [ ! -f "$(plist_path)" ]; then warn "$(t "no scheduled sync (brainctl task add)" "синхронизации по расписанию нет (brainctl task add)")"; return; fi
-      local secs out
-      secs="$(sed -n 's:.*<key>StartInterval</key><integer>\([0-9]*\)</integer>.*:\1:p' "$(plist_path)")"
-      if out="$(launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null)"; then
-        ok "$(t "launchd $LABEL: every $((secs / 60)) min., loaded" "launchd $LABEL: каждые $((secs / 60)) мин., загружена")"
-        printf '%s\n' "$out" | grep -E 'last exit code|state =' | sed 's/^[[:space:]]*/         /' || true
-      else
-        warn "$(t "launchd $LABEL: every $((secs / 60)) min., NOT loaded (paused? brainctl task resume)" "launchd $LABEL: каждые $((secs / 60)) мин., НЕ загружена (на паузе? brainctl task resume)")"
-      fi ;;
-    systemd)
-      if [ ! -f "$(unit_dir)/$UNIT.timer" ]; then warn "$(t "no scheduled sync (brainctl task add)" "синхронизации по расписанию нет (brainctl task add)")"; return; fi
-      local st; st="$(systemctl --user is-active "$UNIT.timer" 2>/dev/null || true)"
-      ok "$(t "systemd timer $UNIT.timer: $st" "таймер systemd $UNIT.timer: $st")"
-      systemctl --user list-timers "$UNIT.timer" --no-pager 2>/dev/null | sed -n '1,2s/^/         /p' || true ;;
-    cron)
-      local line; line="$(cron_get | grep -F "$CRON_MARK" || true)"
-      if [ -z "$line" ]; then warn "$(t "no scheduled sync (brainctl task add)" "синхронизации по расписанию нет (brainctl task add)")"
-      else case "$line" in \#*) warn "cron: $(t "paused" "на паузе")";; *) ok "cron: $(printf '%s' "$line" | cut -d' ' -f1-5)";; esac; fi ;;
-    *) warn "$(t "no scheduler on this system" "планировщика в системе нет")" ;;
-  esac
-}
-
+# Scheduling is shared with the TUI/CLI, including detection of legacy jobs.
+task_add() { brain auto-sync enable --interval "${INTERVAL:-15}"; }
+task_remove() { brain auto-sync disable; }
+task_status() { brain auto-sync status; }
+task_run() { brain sync; }
+# Keep the old command names as aliases. Pausing now removes the OS job as well.
+task_pause() { task_remove; }
+task_resume() { task_add; }
 # ---- commands -------------------------------------------------------------------------------------------
 
 cmd_install() {
+  [ "$AUTO_SYNC" = 0 ] || [ "$NO_TASK" = 0 ] || fail "--auto-sync and --no-task cannot be combined"
   [ -n "$SOURCE" ] || fail "$(t "Run install from the agent-recall folder: ./brainctl.sh install" "Запускайте install из папки agent-recall: ./brainctl.sh install")"
   printf '%sagent-recall %s — %s%s\n' "$C_BOLD" "$(version)" "$(t install установка)" "$C_OFF"
   info "$(t "sources: $SOURCE" "исходники: $SOURCE")"
@@ -498,10 +332,13 @@ cmd_install() {
     step "$(t "First sync (may take a couple of minutes)" "Первая синхронизация (может занять пару минут)")"
     brain sync || warn "$(t "the sync reported errors — see above; brainctl log" "синхронизация сообщила об ошибках — см. выше; brainctl log")"
   fi
-  if [ "$NO_TASK" = 0 ]; then
-    step "$(t "Schedule" "Расписание")"
-    task_add
-  fi
+  step "$(t "Optional auto-sync" "Автосинхронизация по желанию")"
+  local mode=ask
+  if [ "$AUTO_SYNC" = 1 ]; then mode=on
+  elif [ "$NO_TASK" = 1 ]; then mode=off
+  elif [ "$YES" = 1 ]; then mode=preserve; fi
+  if [ -n "$INTERVAL" ]; then brain auto-sync setup --mode "$mode" --interval "$INTERVAL"
+  else brain auto-sync setup --mode "$mode"; fi
   if [ "$NO_MCP" = 0 ]; then
     step "$(t "Agent connections (MCP)" "Подключение к агентам (MCP)")"
     brain integrate add all || true
@@ -623,10 +460,12 @@ cmd_help() {
 brainctl — установка и управление agent-recall (Linux, macOS)
 
   install [--interval 15] [--vault DIR] [--python PATH] [--lang en|ru|auto] [-y]
-          [--no-path] [--no-sync] [--no-task] [--no-mcp]
+          [--no-path] [--no-sync] [--auto-sync | --no-task] [--no-mcp]
                          Python 3.11+ (подскажет команду установки) → окружение →
                          команды brain и brainctl в ~/.local/bin → PATH → конфиг →
-                         первая синхронизация → расписание → подключение к агентам
+                         первая синхронизация → выбор расписания → подключение к агентам
+                         По умолчанию выключена; -y сохраняет текущее состояние.
+                         --auto-sync включает, --no-task отключает и удаляет задачу.
   update                 git pull исходников и переустановка
   uninstall [--purge]    удалить программу; с --purge ещё и базу с конфигом
 
@@ -655,10 +494,12 @@ EOF
 brainctl — install and manage agent-recall (Linux, macOS)
 
   install [--interval 15] [--vault DIR] [--python PATH] [--lang en|ru|auto] [-y]
-          [--no-path] [--no-sync] [--no-task] [--no-mcp]
+          [--no-path] [--no-sync] [--auto-sync | --no-task] [--no-mcp]
                          Python 3.11+ (suggests the install command) → environment →
                          brain and brainctl in ~/.local/bin → PATH → config →
-                         first sync → schedule → agent connections
+                         first sync → choose scheduling → agent connections
+                         Off by default; -y preserves the current state.
+                         --auto-sync enables; --no-task disables and removes the job.
   update                 git pull the sources and reinstall
   uninstall [--purge]    remove the program; --purge also deletes the database and config
 
@@ -694,7 +535,8 @@ while [ $# -gt 0 ]; do
     --purge) PURGE=1 ;;
     --no-path) NO_PATH=1 ;;
     --no-sync) NO_SYNC=1 ;;
-    --no-task) NO_TASK=1 ;;
+    --no-task|--no-auto-sync) NO_TASK=1 ;;
+    --auto-sync) AUTO_SYNC=1 ;;
     --no-mcp) NO_MCP=1 ;;
     --interval) INTERVAL="${2:?--interval needs minutes}"; shift ;;
     --vault) VAULT="${2:?--vault needs a path}"; shift ;;

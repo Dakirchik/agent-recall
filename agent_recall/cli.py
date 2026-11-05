@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -21,6 +22,54 @@ def _out(data, as_json: bool) -> bool:
         print(json.dumps(data, ensure_ascii=False, indent=2, default=str))
         return True
     return False
+
+
+def cmd_auto_sync(cfg, args):
+    from .scheduler import Scheduler, ScheduleError
+    scheduler = Scheduler(cfg)
+    try:
+        state = scheduler.status()
+        action = args.action
+        interval = args.interval if args.interval is not None else state.interval
+        if action == "setup":
+            print(_("Auto-sync runs brain sync on the configured sources. It does not import export ZIPs."))
+            print(_("It uses your OS scheduler; disabling it removes the job and keeps your data."))
+            if state.installed:
+                print(_("Existing schedule detected; the default keeps its current state and interval."))
+            mode = args.mode
+            if mode == "ask":
+                default = "Y/n" if state.enabled else "y/N"
+                try:
+                    answer = input(_("Enable auto-sync every {minutes} minutes?").format(minutes=interval) + f" [{default}] ").strip().lower()
+                except EOFError:
+                    answer = ""
+                if answer and answer not in {"y", "yes", "д", "да", "n", "no", "н", "нет"}:
+                    print(_("Unrecognized answer. Schedule unchanged."))
+                    return 1
+                enabled = answer in {"y", "yes", "д", "да"} if answer else state.enabled
+            else:
+                enabled = state.enabled if mode == "preserve" else mode == "on"
+            action = "enable" if enabled else "disable"
+        if action == "enable":
+            scheduler.enable(interval)
+        elif action == "disable":
+            scheduler.disable()
+        state = scheduler.status()
+        if (action == "enable" and not state.enabled) or (action == "disable" and state.enabled):
+            raise ScheduleError("The OS did not apply the requested schedule state")
+        if not _out(state.to_dict(), args.json):
+            print(_("Auto-sync: {state}").format(state=_("enabled") if state.enabled else _("disabled")))
+            print(_("Scheduler: {backend}").format(backend=state.backend))
+            if state.enabled:
+                print(_("Interval: {minutes} minutes").format(minutes=state.interval))
+            elif state.installed:
+                print(_("A paused schedule exists. Disable removes it."))
+            if action == "disable":
+                print(_("Scheduled sync jobs removed. Manual sync and your data are still available."))
+        return 0
+    except (ScheduleError, OSError, ValueError) as e:
+        print(_("Could not change or read auto-sync: {error}").format(error=e), file=sys.stderr)
+        return 1
 
 
 def _short(ts: str | None) -> str:
@@ -112,6 +161,13 @@ def cmd_paths(cfg, args):
             (_("Attachments"), att)]
     rows += [("Claude Code", p) for p in src["claude_code"]]
     rows += [("Codex", p) for p in src["codex"]]
+    rows += [(_("Codex chat history"), expand(os.environ.get("CODEX_HOME") or "~/.codex") / "sessions")]
+    archives = list(dict.fromkeys(cfg.get("import_archives", [])))
+    if archives:
+        rows.append((_("Latest import"), expand(archives[-1])))
+        rows += [(_("Import archive"), expand(p)) for p in archives[:-1]]
+    new_imports = _("New imports")
+    rows.append((new_imports, expand(cfg.get("import_archive_dir") or db.parent / "imports")))
     rows += [("Obsidian", p) for p in src["obsidian"]] or [("Obsidian", not_set)]
     exp = cfg.get("export", {})
     rows += [(_("Copy after sync"), expand(d)) for d in exp.get("after_sync") or []]
@@ -123,7 +179,9 @@ def cmd_paths(cfg, args):
                            "exists": Path(str(p)).exists()} for n, p in rows], ensure_ascii=False, indent=2))
         return
     for name, p in rows:
-        mark = "" if p == not_set or Path(str(p)).exists() else "   " + _("(missing)")
+        mark = ""
+        if p != not_set and not Path(str(p)).exists():
+            mark = "   " + (_("(created on import)") if name == new_imports else _("(missing)"))
         print(f"{name:19} {p}{mark}")
 
 
@@ -364,6 +422,26 @@ def cmd_mcp(cfg, args):
     serve(cfg)
 
 
+def cmd_codex_import(cfg, args):
+    from .codex_bridge import install, prepare, verify
+    from .config import remember_import
+    if args.action == "prepare":
+        result = prepare(args.source, args.output)
+        remember_import(cfg, Path(args.output) / "manifest.json", archive_root=Path(args.output).resolve().parent)
+        print(_("Prepared: {c} chats, {p} projects, {a} artifacts. Manifest: {path}",
+                c=len(result["threads"]), p=len(result["projects"]), a=len(result["artifacts"]),
+                path=str(Path(args.output).resolve() / "manifest.json")))
+    elif args.action == "install":
+        result = install(args.manifest, args.codex, args.codex_home, args.limit)
+        remember_import(cfg, Path(args.manifest))
+        print(_("Registered in Codex: {c} chats", c=len(result["threads"])))
+    else:
+        result = verify(args.manifest, args.codex, args.codex_home)
+        remember_import(cfg, Path(args.manifest))
+        print(_("Verified in Codex: {c} chats, {m} messages; transcript text matches",
+                c=result["threads"], m=result["messages"]))
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="brain", description=_("agent-recall: shared memory for AI agents — sync, search, handoff"))
     p.add_argument("--config", help=_("path to config.toml (default {path})", path=DEFAULT_CONFIG_PATH))
@@ -400,6 +478,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--only", nargs="+", choices=["obsidian", "claude_code", "codex", "github"])
     sp.add_argument("-v", "--verbose", action="store_true")
     sp.set_defaults(fn=cmd_sync)
+
+    sp = sub.add_parser("auto-sync", help=_("enable or remove optional scheduled sync"))
+    sp.add_argument("action", nargs="?", default="status", choices=["status", "enable", "disable", "setup"])
+    sp.add_argument("--interval", type=int, help=_("sync interval in minutes (default: existing interval or 15)"))
+    sp.add_argument("--mode", choices=["ask", "preserve", "on", "off"], default="ask",
+                    help=_("setup: ask, preserve the existing state, enable, or disable"))
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(fn=cmd_auto_sync)
 
     sp = sub.add_parser("search", help=_("full-text search"))
     sp.add_argument("query", nargs="+")
@@ -473,6 +559,24 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("format", choices=["claude", "chatgpt", "auto"], help=_("whose export (auto — detect)"))
     sp.add_argument("path", help=_("export zip, unpacked folder or conversations.json"))
     sp.set_defaults(fn=cmd_import)
+
+    sp = sub.add_parser("codex-import", help=_("experimental: migrate Claude web exports into native Codex history"))
+    actions = sp.add_subparsers(dest="action", required=True)
+    prepare = actions.add_parser("prepare", help=_("prepare conversations, projects and artifacts without changing Codex"))
+    prepare.add_argument("source")
+    prepare.add_argument("output")
+    prepare.set_defaults(fn=cmd_codex_import)
+    install = actions.add_parser("install", help=_("register prepared conversations through Codex app-server"))
+    install.add_argument("manifest")
+    install.add_argument("--codex", required=True, help=_("path to the Codex executable"))
+    install.add_argument("--codex-home", required=True, help=_("destination Codex home directory"))
+    install.add_argument("--limit", type=int)
+    install.set_defaults(fn=cmd_codex_import)
+    verify = actions.add_parser("verify", help=_("compare imported Codex history with the prepared archive"))
+    verify.add_argument("manifest")
+    verify.add_argument("--codex", required=True, help=_("path to the Codex executable"))
+    verify.add_argument("--codex-home", required=True, help=_("destination Codex home directory"))
+    verify.set_defaults(fn=cmd_codex_import)
 
     sp = sub.add_parser("ui", help=_("full-screen UI (also: brain with no arguments)"))
     sp.set_defaults(fn=cmd_ui)

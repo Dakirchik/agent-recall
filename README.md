@@ -28,7 +28,7 @@ explain the context again.
 - **Agents that remember.** Over MCP, Claude Code, Codex and Cline search your past sessions, notes and
   commits themselves: *"what did we decide about auth last week?"*
 - **Nothing to run, nothing to pay.** No embeddings, no vector database, no server, no cloud. SQLite
-  full-text search in one file you own, synced every 15 minutes in the background.
+  full-text search in one file you own, with optional background sync.
 
 ## Features
 
@@ -50,7 +50,7 @@ explain the context again.
 
 The same thing on every system: a one-command installer finds Python 3.11+, creates a private
 environment (your system Python is untouched), finds your Obsidian vaults and agent folders, runs the
-first sync, schedules one every 15 minutes, connects the MCP server to the agents you have, and puts
+first sync, offers optional scheduling, connects the MCP server to the agents you have, and puts
 `brain` and `brainctl` on PATH.
 
 **Windows** — download the repository and double-click **`install.cmd`**, or in PowerShell:
@@ -79,7 +79,7 @@ git clone https://github.com/Dakirchik/agent-recall && cd agent-recall
 | Python 3.11+ if missing | installs 3.12 via winget | offers `brew install python@3.12` | prints the `apt` / `dnf` / `pacman` command |
 | Program | `%LOCALAPPDATA%\agent-recall` | `~/.local/share/agent-recall` | `~/.local/share/agent-recall` |
 | Commands | `brain`, `brainctl` on the user PATH | `~/.local/bin`, line in `~/.zshrc` | `~/.local/bin`, line in your shell profile |
-| Sync every 15 min | Task Scheduler | launchd agent | systemd user timer, or cron |
+| Optional auto-sync | Task Scheduler | launchd agent | systemd user timer, or cron |
 | Data | `%USERPROFILE%\.agent-recall` | `~/.agent-recall` | `~/.agent-recall` |
 
 Behind a corporate proxy set `HTTPS_PROXY` first. On **macOS**, if your Obsidian vault is in
@@ -108,6 +108,34 @@ brain paths                             # where everything lives
 
 ## Managing it: brainctl
 
+Installation asks whether to enable auto-sync. New installations default to **no**. Reinstalling
+detects existing schedules, including BrainSync jobs; `-Yes` / `-y` preserves their state and
+interval, and leaves new installations off. Explicitly enable with `-AutoSync` on Windows or
+`--auto-sync` on macOS/Linux. `-NoTask` / `--no-task` disables scheduling and removes recognized
+legacy sync jobs. The default interval is 15 minutes, or the existing interval on reinstall.
+
+Later, open **brain → Auto-sync** to see the state, scheduler and interval, enable it, change the
+interval, or disable it. Scheduling runs ordinary `brain sync` on configured sources; GitHub is
+contacted if configured. No AI model calls are made, and export ZIPs still require manual import.
+Disabling removes the job from Windows Task Scheduler, macOS launchd, or Linux systemd/cron.
+Your database, chats and manual sync remain available. Scheduler access errors are displayed.
+
+Open **brain → Help → Windows / macOS / Linux** for "How to find and check the scheduler":
+where to find the job, independent checks, expected results, and how to verify removal after
+disabling. It also covers legacy BrainSync jobs and checking the sync log. The same guide is
+available from Auto-sync.
+
+The same commands work on every OS, including pip installations:
+
+```bash
+brain auto-sync status
+brain auto-sync enable --interval 30
+brain auto-sync disable
+```
+
+Existing `brainctl task` commands remain available. `pause` now removes the job; `resume` enables
+it (15 minutes by default; specify a different interval explicitly).
+
 The same commands on every system (`brainctl.ps1` on Windows, `brainctl.sh` on macOS and Linux):
 
 ```bash
@@ -125,6 +153,63 @@ brainctl uninstall [--purge]     # --purge also deletes the database and config 
 Uninstall removes exactly what was added: the program folder, the commands, the scheduled job and the
 PATH line in your profile. Settings of other tools (`.codex/config.toml`, Cline) are backed up as
 `*.bak-<date>` before any change.
+
+## Import chats from the menu
+
+Run `brain` → **Import a chat export**, then choose the result:
+
+- **Add to shared memory** — Claude or ChatGPT chats become available in agent-recall Sessions and Search.
+- **Import into Codex history** — Claude conversations appear in local Codex history with a `[Claude]` prefix.
+  The app finds Codex and asks where to save the archive. Review the chat/message count before
+  transferring; message text is verified afterwards. No Codex projects are created.
+
+**Fully close the Codex desktop app before transferring.** Run this wizard in a regular terminal
+and keep it open until completion. Open Codex again after the transfer succeeds.
+
+**Read Prepare Claude export or Prepare ChatGPT export before starting.** Both guides are in
+the same menu and include step-by-step instructions and links. The short version:
+
+1. **Claude:** open [Settings → Privacy](https://claude.ai/settings/data-privacy-controls), select
+   **Export data**, wait for the email and download the export within 24 hours.
+   [Official Claude instructions](https://support.claude.com/en/articles/9450526-export-your-claude-data).
+2. **ChatGPT:** open **Settings → Data controls → Export data** and confirm. Download the ZIP
+   within 24 hours of receiving the email or SMS.
+   [Official ChatGPT instructions](https://help.openai.com/en/articles/7260999-exporting-your-chatgpt-history-and-data).
+3. For Claude, prepare a folder like the example below: extract `conversations.json` from
+   `conversations-000.zip` and leave the other ZIP files compressed. Select the whole folder.
+   The conversations ZIP is also supported directly, without extraction. For ChatGPT, choose
+   the downloaded ZIP. Paste or drag the path into the terminal.
+
+Example Claude folder (companion archives are optional):
+
+```text
+export/
+  conversations.json       <- extract from conversations-000.zip
+  conversations-000.zip    <- original archive can stay
+  frames-000.zip
+  projects-000.zip
+  memories-000.zip
+  feedback-000.zip
+  light_metadata-000.zip
+```
+
+Transferring to Codex requires a local Codex installation. The menu explains where to find the
+imported chats. Source documents and artifact files are preserved locally. Choosing the same
+export again reuses its prepared archive and previously transferred conversations.
+
+After choosing the ZIP, **Where should the local import archive be saved?** offers `imports/`
+next to the agent-recall database. Press Enter to accept, or Del and enter another location,
+such as `D:\AI\imports`. Each export gets its own subfolder. Choose a permanent location:
+it also provides the imported chats' working directory. Original ZIPs stay in place;
+Codex sessions are stored separately in Codex history.
+
+Your chosen folder is remembered for later runs. **Status and paths** and `brain paths` show
+the **Latest import** with its actual archive path, earlier **Import archives**, the folder for
+**New imports**, and **Codex chat history**. A future folder is marked **created on import**
+until it exists. Open the archive's
+`README.md` for its table of contents; find chats in Codex by their `[Claude]` prefix.
+The wizard explains common mistakes, including incorrect paths, the wrong ZIP, damaged files
+and inaccessible folders, with steps to recover.
 
 ## What gets collected
 
@@ -231,6 +316,42 @@ first one it usually takes a few seconds (GitHub, if enabled, adds a few API cal
 removes the old scheduled task and environment and keeps using your existing database.
 
 ## Development
+
+### Experimental Claude web export migration to native Codex history
+
+`brain codex-import` migrates **claude.ai** exports into local Codex history, independently
+of the searchable MCP archive created by `brain import`. Tested with Codex Desktop
+`0.166.0-alpha.6` on Windows; rollout formats and migration APIs are experimental.
+
+```powershell
+brain codex-import prepare "C:\exports\claude" "C:\archives\claude"
+brain codex-import install "C:\archives\claude\manifest.json" --codex "C:\path\codex.exe" --codex-home "$env:USERPROFILE\.codex" --limit 1
+```
+
+Choose a new, permanent output folder. Remove `--limit 1` to install all nonempty chats.
+Imported chats have a `[Claude]` prefix. Find them in Codex chat history or search by that
+prefix. The importer registers conversations only: it does not create projects, assign chats
+to projects, or edit the desktop sidebar settings. Keep the output folder in place afterwards:
+it contains the source archive and provides the chats' working directory.
+
+```powershell
+brain codex-import verify "C:\archives\claude\manifest.json" --codex "C:\path\codex.exe" --codex-home "$env:USERPROFILE\.codex"
+```
+
+Verification reads every imported turn through Codex and compares message roles and text.
+Installation uses the local app-server, makes no model requests, backs up SQLite indexes
+including committed WAL changes, and never edits Codex tables directly. Repeating installation
+with the same manifest skips registered chats and does not overwrite continued sessions.
+Newer exports are not automatically merged into previously imported sessions. Old manifests
+and receipts remain readable; existing project assignments from earlier imports are left alone.
+
+The output preserves source conversations, Markdown transcripts, project documents, artifact
+files and versions, and companion memory/metadata archives. Artifacts are local files, not
+Claude-style interactive artifacts in Codex. Projects and their documents are archived as
+local reference files only. Missing images cannot be recovered. Thinking remains in source JSON only;
+tool calls become inert transcript text. Exported project prompts and memories are preserved
+as data, never activated as Codex instructions or memory. Empty chats remain in the archive.
+The archive is private; this repository excludes `attachments/` from Git.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules of the house.
 
